@@ -7,7 +7,7 @@ import torch
 from torch.optim import SGD
 import matplotlib.pyplot as plt
 import gym, numpy as np
-import plotting
+import tools
 
 class Model(torch.nn.Module):
       """ Layer hierarchies with weights sharing """
@@ -359,7 +359,7 @@ if __name__ == '__main__':
       # visualize transition prediction
       scale = 255
       predicts_plot = np.asarray([pred.squeeze() for pred in preds_t[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])#*255
-      if PLOT_VIDEO: plotting.plot_episode(predicts_plot*scale, agent_frames, env_states, title="transition_predictions")
+      if PLOT_VIDEO: tools.plot_episode(predicts_plot*scale, agent_frames, env_states, title="transition_predictions")
       if True:
             plt.imshow(predicts_plot[-1])
             plt.title("dynamical prediction (transition)")
@@ -368,7 +368,7 @@ if __name__ == '__main__':
 
       # visualize dynamical prediction
       predicts_plot = np.asarray([pred.squeeze() for pred in preds_d[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])#*255
-      if PLOT_VIDEO: plotting.plot_episode(predicts_plot*scale, agent_frames, env_states, title="dynamical_predictions")
+      if PLOT_VIDEO: tools.plot_episode(predicts_plot*scale, agent_frames, env_states, title="dynamical_predictions")
       if PLOT_IMG:
             plt.imshow(predicts_plot[-1])
             plt.title("dynamical prediction (top-down)")
@@ -377,7 +377,7 @@ if __name__ == '__main__':
 
       # visualize hierarchical prediction
       predicts_plot = np.asarray([pred.squeeze() for pred in preds_h[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])#*255
-      if PLOT_VIDEO: plotting.plot_episode(predicts_plot*scale, agent_frames, env_states, title="hierarchical_predictions")
+      if PLOT_VIDEO: tools.plot_episode(predicts_plot*scale, agent_frames, env_states, title="hierarchical_predictions")
       if PLOT_IMG:
             plt.imshow(predicts_plot[-1])
             plt.title("hierarchical prediction")
@@ -386,7 +386,7 @@ if __name__ == '__main__':
 
       # visualize hierarchical model errors
       errors_h_plot = np.asarray([e.detach().numpy().squeeze() for e in errors_h[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
-      if PLOT_VIDEO: plotting.plot_episode(errors_h_plot*scale, np.zeros_like(agent_frames), env_states, title="hierarchical_errors")
+      if PLOT_VIDEO: tools.plot_episode(errors_h_plot*scale, np.zeros_like(agent_frames), env_states, title="hierarchical_errors")
       if PLOT_IMG:
             plt.imshow(errors_h_plot[-1])
             plt.title("hierarchical prediction error")
@@ -395,7 +395,7 @@ if __name__ == '__main__':
 
       # visualize dynamical model errors
       errors_d_plot = np.asarray([e.detach().numpy().squeeze() for e in errors_d[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
-      if PLOT_VIDEO: plotting.plot_episode(errors_h_plot*scale, np.zeros_like(agent_frames), env_states, title="dynamical_errors")
+      if PLOT_VIDEO: tools.plot_episode(errors_h_plot*scale, np.zeros_like(agent_frames), env_states, title="dynamical_errors")
       if PLOT_IMG:
             plt.imshow(errors_d_plot[-1])
             plt.title("dynamical prediction error")
@@ -404,7 +404,7 @@ if __name__ == '__main__':
 
       # visualize model inputs
       inp_list_d_plot = np.asarray([e.detach().numpy().squeeze() for e in inp_list_d[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
-      if PLOT_VIDEO: plotting.plot_episode(errors_h_plot*scale, np.zeros_like(agent_frames), env_states, title="model_inputs")
+      if PLOT_VIDEO: tools.plot_episode(errors_h_plot*scale, np.zeros_like(agent_frames), env_states, title="model_inputs")
       if PLOT_IMG:
             plt.imshow(inp_list_d_plot[-1])
             plt.title("input")

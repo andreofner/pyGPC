@@ -1,8 +1,9 @@
-""" Plotting helpers"""
-import random
-import torch
+""" Tools for plotting and creating OpenAI gym environments from datasets"""
+
 import gym
-import sys
+import torch
+import random
+import sys, os
 import numpy as np
 import matplotlib.cm as cm
 from gym.utils import seeding
@@ -11,6 +12,8 @@ from tensorflow import keras
 import matplotlib.pyplot as plt
 from moviepy.editor import ImageSequenceClip
 
+
+""" Plotting helpers"""
 def plot_episode(frames, agent_frames, states_batch, max_visualized_agents=8, title=""):
       """ save episode video as gif """
       states_batch = states_batch.swapaxes(0,1)
@@ -143,6 +146,7 @@ DROPOUT_STATE = 0.0
 # logging and visualization settings
 VERBOSE = False
 PLOT_PATH = "./figures/"
+os.makedirs(PLOT_PATH) # create folder
 
 def load_moving_mnist(plot=False, nr_sequences=1000):
       """ Loads moving MNIST and saves to disk"""
@@ -355,15 +359,15 @@ def register(id, entry_point, reward_threshold=900):
 
 register(
       id='Mnist-s1-v0',
-      entry_point='gym_mnist.mnist:MnistEnv1'
+      entry_point='tools:MnistEnv1'
 )
 
 register(
       id='Mnist-s2-v0',
-      entry_point='gym_mnist.mnist:MnistEnv2'
+      entry_point='tools:MnistEnv2'
 )
 
 register(
       id='Mnist-s3-v0',
-      entry_point='gym_mnist.mnist:MnistEnv3'
+      entry_point='tools:MnistEnv3'
 )
