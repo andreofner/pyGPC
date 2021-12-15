@@ -1,5 +1,6 @@
 """
-Differentiable Generalized Predictive Coding
+Differentiable Generalized Predictive Coding in Python & Torch
+André Ofner 2021
 """
 
 import math
@@ -37,7 +38,6 @@ class ParallelModel(torch.nn.Module):
       def get_layer_weights(self, l): # weights for all models at layer l
             return [m.layers[l] for b, m in enumerate(self.models)]
 
-
 def predict(w_list, target=None, inp_list=None):
       """ Backward pass through provided layers """
       if inp_list is None:
@@ -49,7 +49,12 @@ def predict(w_list, target=None, inp_list=None):
       return list(reversed(inp_list))
 
 
-def GPC(model_h, model_d, model_t, h_low, d_low, h_var, d_var, h_high, d_high, last_state, loss=torch.abs, dynamical=True):
+def GPC(model_h, model_d, model_t,
+        h_low, d_low,
+        h_var, d_var,
+        h_high, d_high,
+        last_state, transitioned_state,
+        loss=torch.abs, dynamical=True):
       """ Generalized Predictive Coding optimizer """
 
       # todo state transition inference (not only weights learning):

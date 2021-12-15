@@ -1,17 +1,16 @@
-""" Tools for plotting and creating OpenAI gym environments from datasets"""
+"""
+Tools for plotting and creating OpenAI gym environments from datasets
+André Ofner 2021
+"""
 
 import gym
-import torch
-import random
 import sys, os
 import numpy as np
-import matplotlib.cm as cm
 from gym.utils import seeding
 from gym.envs.registration import register as gym_register
 from tensorflow import keras
 import matplotlib.pyplot as plt
 from moviepy.editor import ImageSequenceClip
-
 
 """ Plotting helpers"""
 def plot_episode(frames, agent_frames, states_batch, max_visualized_agents=8, title=""):
@@ -20,95 +19,12 @@ def plot_episode(frames, agent_frames, states_batch, max_visualized_agents=8, ti
       clip = ImageSequenceClip(list(frames), fps=20)
       clip.write_gif(str(PLOT_PATH)+str(title)+'.gif', fps=20, verbose=False)
 
-def plot_predictions(state_model, input, state, reconstruction, action, agent_size, layer2_pred=None, title=""):
-      if layer2_pred is None: # single layer model
-            predicted_state = state_model(torch.cat([torch.vstack([state]), torch.vstack([action])], dim=1))
-            fig, axs = plt.subplots(1, 4)
-            axs[0].imshow(input)
-            axs[0].set_title("Input")
-            axs[1].imshow(reconstruction.detach().numpy().reshape([agent_size * 2, agent_size * 2, 1]))
-            axs[1].set_title("Input reconstruction")
-            axs[2].imshow(state.detach().reshape([-1,1]))
-            axs[2].set_title("Encoded state")
-            for (j, i), label in np.ndenumerate(state.detach().reshape([-1,1])):
-                  axs[2].text(i, j, label, ha='center', va='center')
-            axs[3].imshow(predicted_state.detach().reshape([-1,1]))
-            axs[3].set_title("Predicted state")
-            for (j, i), label in np.ndenumerate(predicted_state.detach().reshape([-1,1])):
-                  axs[3].text(i, j, label, ha='center', va='center')
-            plt.tight_layout()
-            plt.savefig(str(PLOT_PATH)+'predictions'+str(title)+'.png')
-            plt.close()
-      else:
-            predicted_state = state_model(torch.cat([torch.vstack([state]), torch.vstack([action])], dim=1))
-            fig, axs = plt.subplots(1, 5)
-            axs[0].imshow(input)
-            axs[0].set_title("Input")
-            axs[1].imshow(reconstruction.detach().numpy().reshape([agent_size * 2, agent_size * 2, 1]))
-            axs[1].set_title("Input\nreconstruction")
-            axs[2].imshow(state.detach().reshape([-1,1]))
-            axs[2].set_title("Encoded\nstate")
-            axs[3].imshow(predicted_state.detach().reshape([-1,1]))
-            axs[3].set_title("Predicted\nstate")
-            axs[4].imshow(layer2_pred.detach().reshape([-1,1]))
-            axs[4].set_title("Top-down\nprediction")
-            plt.tight_layout()
-            plt.savefig(str(PLOT_PATH)+'predictions'+str(title)+'.png')
-            plt.close()
-
-def plot_predictions_list(examples_to_plot, obs_, predicted_stimulus, title_):
-      fig, axs = plt.subplots(max(2, examples_to_plot), 2)
-      for batch_pos in range(examples_to_plot):
-            axs[batch_pos, 0].imshow(obs_['STIM'][batch_pos], interpolation="nearest")
-            axs[batch_pos, 0].set_title("Target")
-            axs[batch_pos, 1].imshow(predicted_stimulus[batch_pos], interpolation="nearest")
-            axs[batch_pos, 1].set_title("Prediction")
-      plt.tight_layout()
-      plt.savefig(str(PLOT_PATH)+'pred' + str(0) + '_stimulus' + str(title_) + '.png')
-      plt.close()
-
 def visualize_episode_video(frames, agent_frames, states):
       # visualize episode as video
       frames = np.asarray(frames)
       agent_frames = np.asarray(agent_frames)
       states = np.asarray(states)
       plot_episode(frames, agent_frames, states)
-
-def visualize_losses(autoencoder_loss, state_loss, state_loss_l2=None):
-      # plot losses
-      if state_loss_l2 is None: # single layer DAI model
-            fig, axs = plt.subplots(1, 2)
-            axs[0].plot(autoencoder_loss)
-            axs[0].set_title("Reconstruction loss")
-            axs[1].plot(state_loss)
-            axs[1].set_title("State prediction loss")
-            plt.tight_layout()
-            plt.savefig(str(PLOT_PATH)+'losses.png')
-            plt.close()
-      else: # 2 layer DAI model
-            fig, axs = plt.subplots(1, 3)
-            axs[0].plot(autoencoder_loss)
-            axs[0].set_title("Reconstruction loss L1")
-            axs[1].plot(state_loss)
-            axs[1].set_title("State prediction loss L1")
-            axs[2].plot(state_loss_l2)
-            axs[2].set_title("State prediction loss L2")
-            plt.tight_layout()
-            plt.savefig(str(PLOT_PATH)+'losses.png')
-            plt.close()
-
-def plot_action_probabilities(action_probs):
-      if len(action_probs) >  1000:
-            plt.imshow(np.asarray(action_probs[0::int(len(action_probs)/100)]).T, aspect='50') # subsampling
-      else:
-            plt.imshow(np.asarray(action_probs).T, aspect='50')
-      plt.title("Action selection probability:")
-      plt.yticks(range(len(ACTION_SPACE)), ACTION_NAMES.values())
-      plt.xlabel("Update")
-      plt.xticks([])
-      plt.tight_layout()
-      plt.savefig(str(PLOT_PATH)+'action_probabilities.png')
-      plt.close()
 
 def video(frames, title="", plot_path=None):
       # save data seen by agent in this episode as gif
@@ -119,34 +35,25 @@ def video(frames, title="", plot_path=None):
             clip.write_gif(str(plot_path)+''+str(title)+'.gif', fps=20, verbose=False)
 
 
-
-
-
 """ Moving MNIST in OpenAI Gym"""
 
 # environment settings
 AGENT_SIZE = 32
-NOISE_SCALE = 0.0
-AGENT_STEP_SIZE = 1
+NOISE_SCALE = 0.0 # add gaussian noise to images
+AGENT_STEP_SIZE = 1 # only for spatial actions
 # ACTION_NAMES = {0:"Previous frame",1:"Next frame",2:"Up",3:"Down",4:"Left",5:"Right"}
-ACTION_NAMES = {2: "Up", 3: "Down", 4: "Left", 5: "Right"}
+ACTION_NAMES = {0:"Previous frame",1:"Next frame"}
 ACTION_SPACE = list(ACTION_NAMES)
-VIDEO_MODE = True  # disable the time actions and the same moving MNIST frames to all DAI agents
-
-# training settings
-OBSERVATION_SIZE = (AGENT_SIZE * 2) * (AGENT_SIZE * 2)  # size of observed patch, the input for the autoencoder
-STATE_SIZE = int(OBSERVATION_SIZE / 4)  # Size of observed states -->  amount of "compression"
-BATCH_SIZE = 1
-LEARNING_RATE = 1e-4
-LEARNING_RATE_AUTOENCODER = 1e-4
-LEARNING_RATE_LAYER2 = 1e-4
-DROPOUT_AE = 0.0
-DROPOUT_STATE = 0.0
+VIDEO_MODE = False # disable actions controlling time
+OBSERVATION_SIZE = (AGENT_SIZE * 2) * (AGENT_SIZE * 2)  # size of observed patch
 
 # logging and visualization settings
 VERBOSE = False
 PLOT_PATH = "./figures/"
-os.makedirs(PLOT_PATH) # create folder
+try:
+      os.makedirs(PLOT_PATH) # create folder
+except:
+      pass
 
 def load_moving_mnist(plot=False, nr_sequences=1000):
       """ Loads moving MNIST and saves to disk"""
@@ -186,7 +93,7 @@ class MnistEnv(gym.Env):
                               self.time_state = 0   # position in current sequence
                               self.step_size_xy = AGENT_STEP_SIZE # how large steps within frames are
 
-                  self.number_of_agents = BATCH_SIZE
+                  self.number_of_agents = 1
                   self.data = load_moving_mnist()
                   self.shape = 64, 64
                   self.nr_sequences = 1000 # sequences in dataset
@@ -282,29 +189,16 @@ class MnistEnv(gym.Env):
                   # add noise
                   img = img.astype(np.float64) + self.noise_scale * np.random.rand(img.shape[0], img.shape[1], 1) * 255 - 127
                   img = np.clip(img, 0, 255).astype(int)
-                  # mask the area seen by the agent currently
-                  agentobs = np.zeros_like(img)
 
-                  if False:
-                        observed_patch = img[ca.pos_x - ca.agent_size:ca.pos_x + ca.agent_size,ca.pos_y - ca.agent_size:ca.pos_y + ca.agent_size]
-                        agentobs[ca.pos_x-ca.agent_size:ca.pos_x+ca.agent_size, ca.pos_y-ca.agent_size:ca.pos_y+ca.agent_size] = observed_patch
-                        # mark agent position
-                        img_RGB[ca.pos_x-ca.agent_size:ca.pos_x+ca.agent_size:,ca.pos_y-ca.agent_size, :] = 255
-                        img_RGB[ca.pos_x-ca.agent_size:ca.pos_x+ca.agent_size:,ca.pos_y+ca.agent_size, :] = 255
-                        img_RGB[ca.pos_x-ca.agent_size,ca.pos_y-ca.agent_size:ca.pos_y+ca.agent_size, :] = 255
-                        img_RGB[ca.pos_x+ca.agent_size,ca.pos_y-ca.agent_size:ca.pos_y+ca.agent_size+1, :] = 255
-                        # also return the spatial position, temporal position and agent characteristics
-                        state = [ca.time_state, ca.pos_x, ca.pos_y, ca.agent_size, ca.step_size_xy]
-                        ca_obs.append([observed_patch, img_RGB, raw_frame, state, agentobs])
-                  else:
-                        state = [ca.time_state, ca.pos_x, ca.pos_y, ca.agent_size, ca.step_size_xy]
-                        ca_obs.append([img, img_RGB, raw_frame, state, agentobs])
+                  agentobs = np.zeros_like(img)
+                  state = [ca.time_state, ca.pos_x, ca.pos_y, ca.agent_size, ca.step_size_xy]
+                  ca_obs.append([img, img_RGB, raw_frame, state, agentobs])
 
             return ca_obs
 
       def _reward(self):
             ''' Compute the reward to be given upon success '''
-            return 0. #1 - 0.9 * (self.step_count / self.max_steps)
+            return 0. # no reward function
 
       def gen_obs(self):
             if self.dataset == "mnist":
@@ -333,41 +227,33 @@ class MnistEnv(gym.Env):
             self.np_random, _ = seeding.np_random(seed)
             return [seed]
 
+
 class MnistEnv1(MnistEnv):
+      """ Single moving digit """
       def __init__(self):
             super().__init__(num_digits=1)
 
+
 class MnistEnv2(MnistEnv):
+      """ Two moving digits """
       def __init__(self):
             super().__init__(num_digits=2)
 
+
 class MnistEnv3(MnistEnv):
+      """ Three moving digits """
       def __init__(self):
             super().__init__(num_digits=3)
 
-""" Register MNIST as fym environment"""
 
-env_list = []
+""" Register as gym environment"""
+
+
 def register(id, entry_point, reward_threshold=900):
       assert id.startswith("Mnist-")
-      assert id not in env_list
-      # Register the environment with OpenAI gym
       gym_register(id=id, entry_point=entry_point,  reward_threshold=reward_threshold)
-      # Add the environment to the set
-      env_list.append(id)
 
 
-register(
-      id='Mnist-s1-v0',
-      entry_point='tools:MnistEnv1'
-)
-
-register(
-      id='Mnist-s2-v0',
-      entry_point='tools:MnistEnv2'
-)
-
-register(
-      id='Mnist-s3-v0',
-      entry_point='tools:MnistEnv3'
-)
+register(id='Mnist-s1-v0', entry_point='tools:MnistEnv1')
+register(id='Mnist-s2-v0', entry_point='tools:MnistEnv2')
+register(id='Mnist-s3-v0', entry_point='tools:MnistEnv3')
