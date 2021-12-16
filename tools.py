@@ -11,6 +11,7 @@ from gym.envs.registration import register as gym_register
 from tensorflow import keras
 import matplotlib.pyplot as plt
 from moviepy.editor import ImageSequenceClip
+import random
 
 """ Plotting helpers"""
 def plot_episode(frames, title=""):
