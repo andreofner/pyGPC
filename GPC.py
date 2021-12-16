@@ -51,13 +51,13 @@ def GPC(model_h, model_d, model_t, model_t_high,
       opt_high = SGD([z_high], lr=0.1) # states l+1_{t+dt_{l+1}}
 
       # optimizers for learning of weights between current and higher layer
-      opt_weights_h = SGD(list(model_h.parameters()), lr=0.001) # hierarchical weights l
-      opt_weights_d = SGD(list(model_d.parameters()), lr=0.001) # dynamical weights l
-      opt_weights_t = SGD(list(model_t.parameters()), lr=0.01) # dynamical weights l
-      opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=0.01) # transition weights l+1
+      opt_weights_h = SGD(list(model_h.parameters()), lr=0.1) # hierarchical weights l
+      opt_weights_d = SGD(list(model_d.parameters()), lr=0.1) # dynamical weights l
+      opt_weights_t = SGD(list(model_t.parameters()), lr=1)#1) # dynamical weights l
+      opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=1)#1) # transition weights l+1
 
       # optimizers for precision in current layer
-      opt_var_h = SGD([z_var], lr=0.1)  # precision l
+      opt_var_h = SGD([z_var], lr=0.0)  # precision l
 
       # collect variables and optimizers
       p_list = list(model_h.parameters())+list(model_d.parameters())+\
@@ -122,7 +122,7 @@ def GPC(model_h, model_d, model_t, model_t_high,
             predictions = [p.detach().numpy() for p in [TD_prediction_h, TD_prediction_h2, z_low_transitioned]]
             return params, None, predictions, e_h_, e_h2_, e_t_
 
-BATCH_SIZE = 16 # batch of agents TODO fix batch size = 1
+BATCH_SIZE = 64 # batch of agents TODO fix batch size = 1
 NOISE_SCALE = 0.0 # add gaussian noise to images
 IMAGE_SIZE = 16*16 # image size after preprocessing
 
@@ -134,7 +134,7 @@ if __name__ == '__main__':
 
       """ Model setup"""
       l_sizes = [IMAGE_SIZE,64, 64,32, 32,16]
-      hidden_sizes = [256, 256, 128]
+      hidden_sizes = [256, 256]
 
       # output activation for each PC layer
       activations_h = [torch.nn.Sigmoid()] + [torch.nn.ReLU() for l in l_sizes[1::2]]
@@ -169,7 +169,7 @@ if __name__ == '__main__':
       inputs = [[]]
 
       UPDATES = 10
-      actions = [0 for i in range(20)]# + [0 for i in range(20)] + [1 for i in range(20)] + [0 for i in range(20)]
+      actions = [0 for i in range(5)] + [1 for i in range(5)]# + [1 for i in range(20)] + [0 for i in range(20)]
       for i, action in enumerate(actions):   # iterate over time steps
 
             # get observation from gym and preprocess
