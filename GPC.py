@@ -52,21 +52,20 @@ def predict(w_list, target=None, inp_list=None):
 def GPC(model_h, model_d, model_t,
         h_low, d_low,
         h_var, d_var,
-        h_high, d_high,
-        last_state, transitioned_state,
+        h_high, d_high, last_state,
         loss=torch.abs, dynamical=True):
       """ Generalized Predictive Coding optimizer """
 
-      # todo state transition inference (not only weights learning):
-      # d_low_transitioned right now is the predicted output from the transition weights
-      # it should be also inferred. problem: mismatch with data --> that's fine it gets decoded
+      # set hierarchical state as prior for dynamical state
+      d_low = h_low
+      d_high = h_high
 
       # define optimizer and LR for each variable
-      opt_low_h, opt_high_h = SGD([h_low], lr=0.001), SGD([h_high], lr=0.1) # hierarchical states
-      opt_low_d, opt_high_d = SGD([d_low], lr=0.001), SGD([d_high], lr=0.1) # dynamical states
+      opt_low_h, opt_high_h = SGD([h_low], lr=0.0), SGD([h_high], lr=0.1) # hierarchical states
+      opt_low_d, opt_high_d = SGD([d_low], lr=0.0), SGD([d_high], lr=0.1) # dynamical states
       opt_weights_h = SGD(list(model_h.parameters()), lr=0.01) # hierarchical weights
       opt_weights_d = SGD(list(model_d.parameters()), lr=0.01) # dynamical weights
-      opt_var_h, opt_var_d = SGD([h_var], lr=0.1), SGD([d_var], lr=0.1)  # precision
+      opt_var_h, opt_var_d = SGD([h_var], lr=0.01), SGD([d_var], lr=0.01)  # precision
 
       # collect variables and optimizers
       p_list = list(model_h.parameters())+list(model_d.parameters())+[h_low, h_var, h_high] + [d_low, d_var, d_high]
@@ -78,7 +77,7 @@ def GPC(model_h, model_d, model_t,
             opt_list.append(SGD(list(model_t[b].parameters()), lr=0.001))
 
       # optimize all variables
-      for i, opt in enumerate([None]): # optionally iterate over individual optimizers here
+      for _, _ in enumerate([None]): # optionally iterate over individual optimizers here
 
             # detach variables and reset gradients
             [p.detach() for p in p_list]
@@ -91,7 +90,7 @@ def GPC(model_h, model_d, model_t,
             e_h = torch.mean(torch.matmul(h_var**-1, torch.reshape(e_h_, [batch_size, -1, 1]))) # weighted PE
             e_total = e_h
 
-            # 2) dynamical transition and top-down prediction
+            # 2) transition and dynamical top-down prediction
             if dynamical:
                   # state transition
                   d_low_transitioned = []
@@ -104,7 +103,7 @@ def GPC(model_h, model_d, model_t,
                   e_t.backward(create_graph=True)
                   grad_t = (d_low_transitioned-last_state) # state change from transition
 
-                  # top-down transition gradient prediction
+                  # dynamical top-down prediction
                   TD_prediction_d = model_d.forward((d_high)) # dynamical prediction
                   e_d_ = loss(grad_t - TD_prediction_d) # dynamical PE
                   e_d = torch.mean(torch.matmul(d_var**-1, torch.reshape(e_d_, [batch_size, -1, 1]) )) # weighted PE
@@ -127,134 +126,11 @@ def GPC(model_h, model_d, model_t,
       # return variables, predictions and PE
       return params, None, predictions, e_h_, e_d_, e_t_
 
-if __name__ == '__main2__':
-
-      def f_sin_2(x): # data generating function
-            func = math.cos(x)*math.sin(x/2)
-            deriv1 = math.cos(x)*math.sin(x/2) + (math.cos(x/2)*math.sin(x))/2 # for visualization
-            deriv2 = math.cos(x/2)*math.cos(x) - (5*math.sin(x/2)*math.sin(x))/4 # for visualization
-            return func, deriv1, deriv2, r'$ f(x) = sin(x) sin(0.5 x)$'
-
-      def f_sin_pi(x): # data generating function
-            func = math.sin((x/10)*math.pi)
-            deriv1 = math.cos(x)*math.sin(x/2) + (math.cos(x/2)*math.sin(x))/2 # for visualization
-            deriv2 = math.cos(x/2)*math.cos(x) - (5*math.sin(x/2)*math.sin(x))/4 # for visualization
-            return func, deriv1, deriv2, r'$ f(x) = sin(x \pi )$'
-
-      def f_sin_mod(x): # data generating function
-            func = math.sin((x/10)*math.pi) * math.sin(0.7*(x/10)*math.pi)
-            deriv1 = math.cos(x)*math.sin(x/2) + (math.cos(x/2)*math.sin(x))/2 # for visualization
-            deriv2 = math.cos(x/2)*math.cos(x) - (5*math.sin(x/2)*math.sin(x))/4 # for visualization
-            return func, deriv1, deriv2, r'$f(x) = sin( \pi x) sin(0.7 \pi x)$'
-
-      def conv(input, stride=2): # strided conv
-            conv1d = torch.nn.Conv1d(1, 1, 1, stride=stride, bias=False)
-            torch.nn.init.constant_(conv1d.weight,1)
-            return conv1d(input)
-
-      for f, FUNC in enumerate([f_sin_mod]):
-            for stride in [1,10]:
-                  # 1D data batch where each batch element has a different stride
-                  batch_size, l_sizes = 1, [1,1,1,1,1]
-                  #strides = [(s+1) for s in range(batch_size)]
-                  strides = [stride]
-                  data = torch.tensor([FUNC(x)[0] for x in range(200)])
-                  batch = torch.cat([conv(data.repeat(1,1,1), stride=s)[:,:,:] for s in strides])
-                  batch = torch.reshape(batch, [batch_size,1,-1])
-
-                  # shared weights
-                  model_h = Model(sizes=l_sizes, bias=True) # prior hierarchical weights
-                  model_d = Model(sizes=l_sizes, bias=True) # prior dynamical weights
-                  wl_h = [l for l in model_h.layers]
-                  wl_d = [l for l in model_d.layers]
-
-                  # non shared weights
-                  parallel_model_t = ParallelModel(parallel_models=batch_size, sizes=[1,1,1,1,1], bias=True)   # prior transition weights
-                  wl_t = [parallel_model_t.get_layer_weights(l=l) for l in range(4)]
-
-                  # precision
-                  v_h_list = [torch.tensor([(torch.eye(l_sizes[i])*1) for b in range(batch_size)]).requires_grad_()
-                                    for i in range(len(l_sizes))]   # prior hierarchical precision
-                  v_d_list = [torch.tensor([(torch.eye(l_sizes[i])*1) for b in range(batch_size)]).requires_grad_()
-                                    for i in range(len(l_sizes))]   # prior dynamical precision
-
-                  # states
-                  inp_list_h = predict(wl_h, target=torch.tensor(torch.ones_like(batch[:,:,0])*0.1).float(), inp_list=None) # state priors
-                  inp_list_d = predict(wl_d, target=torch.tensor(torch.ones_like(batch[:,:,0])*0.1).float(), inp_list=None) # state priors
-                  inp_list_d_save = inp_list_d # previous state for state transition
-
-                  # logging
-                  errors_h = [[] for _ in wl_h] # hierarchical PE
-                  errors_d = [[] for _ in wl_d] # dynamical PE
-                  errors_t = [[] for _ in wl_d] # transition PE
-                  derivs = [[] for _ in wl_d] # first derivative
-                  predicts = [[] for _ in wl_d] # predictions
-                  states = [[] for _ in wl_d] # inferred states
-                  inputs = [] # model inputs
-
-                  UPDATES = 15 # todo stop when converged
-                  batch = batch.squeeze()
-                  if len(batch.shape) <= 1: batch = batch.unsqueeze(0) # make sure channel dim exists
-                  for i, input in enumerate(batch.T): # iterate over time steps
-                        input = input.detach().unsqueeze(dim=1)
-                        inputs.append(input[:])
-                        for update in range(UPDATES):
-                              # 1) predict
-                              inp_list_h = predict(wl_h, inp_list=inp_list_h)   # state priors
-                              inp_list_d = predict(wl_d, inp_list=inp_list_d)   # state priors
-
-                              # 2) update
-                              for i in [0,1,2]:
-                                    inp_list_h[0] = torch.tensor(input.clone().detach().float())
-                                    inp_list_d[0] = torch.tensor(input.clone().detach().float())
-                                    params, deriv, pred, e_h, e_d, e_t = GPC(wl_h[i], wl_d[i], wl_t[i],
-                                                                  inp_list_h[i], inp_list_d[i], v_h_list[i], v_d_list[i],
-                                                                  inp_list_h[i+1], inp_list_d[i+1], last_state=inp_list_d_save[i])
-                                    wl_h[i], wl_d[i], wl_t[i], inp_list_h[i], inp_list_d[i], v_h_list[i], v_d_list[i], inp_list_h[i+1], inp_list_d[i+1] = params
-                                    if update >= UPDATES-1:
-                                          predicts[i].append(pred[:])
-                                          derivs[i].append(deriv[:])
-                                          errors_h[i].append(e_h.detach())
-                                          errors_d[i].append(e_d.detach())
-                                          errors_t[i].append(e_t.detach())
-                                          states[i+1].append(inp_list_d[i+1][0][0].detach().clone().numpy())
-                        for i in [0, 1]:
-                              inp_list_d_save[i] = inp_list_d[i]   # memorize last state
-
-                  # plot observed and inferred function
-                  for b in range(batch_size):
-                        fig = plt.figure(figsize=(10,5))
-                        ax = plt.subplot(111)
-                        plt.plot([d[b] for i, d in enumerate(inputs[:50])], label="Observed f(x)", color="black", linestyle='--')
-                        plt.plot([d[b] for i, d in enumerate(predicts[0][:50])], label="Learned g(x)", color="black")
-                        plt.plot([d[b] for i, d in enumerate(derivs[0][:50])], label="Learned g'(x)", color="green")
-                        #plt.plot([d[b] for i, d in enumerate(derivs[1][:50])], label="Learned g''(x)", color="blue")
-                        plt.plot([d[0] for i, d in enumerate(errors_t[0][:50])], label="Transition PE f(x)", color="red")
-                        plt.plot([d[b] for i, d in enumerate(errors_d[0][:50])], label="Dynamical PE f(x)", color="red", linestyle='--')
-                        plt.plot([d[b] for i, d in enumerate(errors_t[1][:50])], label="Transition PE f'(x)", color="orange")
-                        plt.plot([d[b] for i, d in enumerate(errors_d[1][:50])], label="Dynamical PE f'(x)", color="orange", linestyle='--')
-                        plt.grid()
-                        plt.ylim(-2,2)
-                        plt.ylabel(r'Observed f(x) and learned g(x)')
-                        plt.xlabel(r'Update x')
-                        plt.title(str(FUNC(0)[3])+r' with stride '+str(strides[b]))
-                        box = ax.get_position()
-                        ax.set_position([box.x0, box.y0, box.width * 0.9, box.height])
-                        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-                        plt.savefig("Stride"+str(f)+str(strides[b])+".pdf")
-                        plt.show()
-                        plt.close()
-
 if __name__ == '__main__':
 
       """ Moving MNIST in OpenAI gym"""
-
-      """ Gym setup """
       env = gym.make('Mnist-s1-v0')
       obs = env.reset()
-      frames = []
-      agent_frames = []
-      env_states = []
 
       """ Model setup"""
       input = torch.Tensor([obs['agent_image'][0].reshape([-1])])
@@ -262,8 +138,8 @@ if __name__ == '__main__':
       batch = input
 
       IMAGE_SIZE = 16*16
-      batch_size, l_sizes = 1, [IMAGE_SIZE,64, 64,32, 32,16]
-      hidden_sizes = [64,32,16]
+      batch_size, l_sizes = 1, [IMAGE_SIZE,32, 32,16]
+      hidden_sizes = [64,32]
       activations_h = [torch.nn.Sigmoid(), torch.nn.ReLU(), torch.nn.ReLU(), torch.nn.Sigmoid()]
       activations_d = [torch.nn.Sigmoid(), torch.nn.ReLU(), torch.nn.ReLU(), torch.nn.Sigmoid()]
       activations_t = [torch.nn.Sigmoid(), torch.nn.ReLU(), torch.nn.ReLU(), torch.nn.Sigmoid()]
@@ -306,15 +182,12 @@ if __name__ == '__main__':
       states = [[] for _ in wl_d]
       inputs = []
 
-      UPDATES = 10
-      actions = [1 for i in range(50)]# + [1 for i in range(5)]
+      UPDATES = 5
+      actions = [1 for i in range(10)]# + [1 for i in range(50)]
       for i, action in enumerate(actions):   # iterate over time steps
 
             """ Get observation from gym"""
             obs, rew, done, _ = env.step([action]) # feed your agent's action here
-            frames.append(obs['image']) # use this to visualize the episode
-            agent_frames.append(obs['agent_image'])  # use this observation for your agent
-            env_states.append(obs['state']) # the agent's positions, size and action sizes could also be fed to your agent
             input = torch.Tensor([obs['agent_image'][0].reshape([-1])])
 
             """ Process observation in model"""
@@ -356,62 +229,28 @@ if __name__ == '__main__':
 
       """ Plotting """
 
-      PLOT_VIDEO = True
-      PLOT_IMG = False
-      agent_frames = np.asarray(agent_frames)
-      env_states = np.asarray(env_states)
+      def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_video=True):
+            try:
+                  predicts_plot = np.asarray([pred.squeeze() for pred in data[0]])
+                  predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
+            except:
+                  predicts_plot = np.asarray([pred.detach().numpy().squeeze() for pred in data[0]])
+                  predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
 
-      # visualize transition prediction
-      scale = 255
-      predicts_plot = np.asarray([pred.squeeze() for pred in preds_t[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])#*255
-      if PLOT_VIDEO: tools.plot_episode(predicts_plot*scale, agent_frames, env_states, title="transition_predictions")
-      if True:
-            plt.imshow(predicts_plot[-1])
-            plt.title("dynamical prediction (transition)")
-            plt.colorbar()
-            plt.show()
+            if plot_video:
+                  tools.plot_episode(predicts_plot*scale, title=str(title))
+            if plot:
+                  plt.imshow(predicts_plot[-1])
+                  plt.title(str(plt_title))
+                  plt.colorbar()
+                  plt.show()
 
-      # visualize dynamical prediction
-      predicts_plot = np.asarray([pred.squeeze() for pred in preds_d[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])#*255
-      if PLOT_VIDEO: tools.plot_episode(predicts_plot*scale, agent_frames, env_states, title="dynamical_predictions")
-      if PLOT_IMG:
-            plt.imshow(predicts_plot[-1])
-            plt.title("dynamical prediction (top-down)")
-            plt.colorbar()
-            plt.show()
+      sequence_video(preds_t, title="transition_predictions", plt_title="Transition prediction")
+      sequence_video(preds_d, title="dynamical_predictions", plt_title="Dynamical prediction")
+      sequence_video(preds_h, title="hierarchical_predictions", plt_title="Hierarchical prediction")
 
-      # visualize hierarchical prediction
-      predicts_plot = np.asarray([pred.squeeze() for pred in preds_h[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])#*255
-      if PLOT_VIDEO: tools.plot_episode(predicts_plot*scale, agent_frames, env_states, title="hierarchical_predictions")
-      if PLOT_IMG:
-            plt.imshow(predicts_plot[-1])
-            plt.title("hierarchical prediction")
-            plt.colorbar()
-            plt.show()
+      sequence_video(errors_t, title="transition_errors", plt_title="Transition prediction error")
+      sequence_video(errors_d, title="dynamical_errors", plt_title="Dynamical prediction error")
+      sequence_video(errors_h, title="hierarchical_errors", plt_title="Hierarchical prediction error")
 
-      # visualize hierarchical model errors
-      errors_h_plot = np.asarray([e.detach().numpy().squeeze() for e in errors_h[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
-      if PLOT_VIDEO: tools.plot_episode(errors_h_plot*scale, np.zeros_like(agent_frames), env_states, title="hierarchical_errors")
-      if PLOT_IMG:
-            plt.imshow(errors_h_plot[-1])
-            plt.title("hierarchical prediction error")
-            plt.colorbar()
-            plt.show()
-
-      # visualize dynamical model errors
-      errors_d_plot = np.asarray([e.detach().numpy().squeeze() for e in errors_d[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
-      if PLOT_VIDEO: tools.plot_episode(errors_h_plot*scale, np.zeros_like(agent_frames), env_states, title="dynamical_errors")
-      if PLOT_IMG:
-            plt.imshow(errors_d_plot[-1])
-            plt.title("dynamical prediction error")
-            plt.colorbar()
-            plt.show()
-
-      # visualize model inputs
-      inp_list_d_plot = np.asarray([e.detach().numpy().squeeze() for e in inp_list_d[0]]).reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
-      if PLOT_VIDEO: tools.plot_episode(errors_h_plot*scale, np.zeros_like(agent_frames), env_states, title="model_inputs")
-      if PLOT_IMG:
-            plt.imshow(inp_list_d_plot[-1])
-            plt.title("input")
-            plt.colorbar()
-            plt.show()
+      #sequence_video(inp_list_d, title="model_inputs", plt_title="Input")
