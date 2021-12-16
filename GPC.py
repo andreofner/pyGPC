@@ -49,37 +49,35 @@ def predict(w_list, target=None, inp_list=None):
       return list(reversed(inp_list))
 
 
-def GPC(model_h, model_d,
-        model_t, model_t_high,
-        h_low, d_low,
-        h_var, d_var,
-        h_high, d_high,
+def GPC(model_h, model_d, model_t, model_t_high,
+        z_low, z_var, z_high,
         last_state, last_state_high,
         loss=torch.abs, dynamical=False):
       """ Generalized Predictive Coding optimizer """
 
-      # hierarchical states are priors of dynamical states
-      #d_low, d_high = h_low, h_high
+      # optimizers for state inference in current layer
+      opt_last_low = SGD([last_state], lr=0.1) # states l_{t}
+      opt_low = SGD([z_low], lr=0.1) # states l_{t+dt_{l+1}}
 
-      # define optimizer and LR for each variable
-      opt_low_h = SGD([h_low], lr=0.0)
-      opt_high_h = SGD([h_high], lr=0.1) # hierarchical states l
-      #opt_low_d = SGD([d_low], lr=0.0)
-      opt_high_d = SGD([d_high], lr=0.1) # dynamical states l
-      # TODO optimizer for last state
-      # TODO optimizer for last state high
+      # optimizers for state inference in higher layer
+      opt_last_high = SGD([last_state_high], lr=1) # higher layer states l+1_{t}
+      opt_high = SGD([z_high], lr=1) # states l+1_{t+dt_{l+1}}
+
+      # optimizers for learning of weights between current and higher layer
       opt_weights_h = SGD(list(model_h.parameters()), lr=0.01) # hierarchical weights l
       opt_weights_d = SGD(list(model_d.parameters()), lr=0.01) # dynamical weights l
-      opt_weights_t = SGD(list(model_t.parameters()), lr=100) # dynamical weights l # todo LR=100?
-      opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=0) # transition weights l+1 # todo LR?
-      opt_var_h, opt_var_d = SGD([h_var], lr=0.0), SGD([d_var], lr=0.0)  # precision l
+      opt_weights_t = SGD(list(model_t.parameters()), lr=0.01) # dynamical weights l # todo LR
+      opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=0.01) # transition weights l+1 # todo LR
+
+      # optimizers for precision of prediction error in current layer
+      opt_var_h = SGD([z_var], lr=0.01)  # precision l
 
       # collect variables and optimizers
       p_list = list(model_h.parameters())+list(model_d.parameters())+\
                list(model_t.parameters())+list(model_t_high.parameters())+\
-               [h_low, h_var, h_high] + [d_var, d_high] #d_low
-      opt_list = [opt_weights_h, opt_weights_d, opt_low_h, opt_var_h, opt_high_h,
-                  opt_var_d, opt_high_d, opt_weights_t, opt_weights_t_high] #opt_low_d
+               [z_low, z_var, z_high, last_state, last_state_high]
+      opt_list = [opt_weights_h, opt_weights_d, opt_low, opt_var_h, opt_high,
+                  opt_weights_t, opt_weights_t_high, opt_last_low, opt_last_high]
 
       # optimize all variables
       for _, _ in enumerate([None]): # optionally iterate over individual optimizers here
@@ -91,10 +89,9 @@ def GPC(model_h, model_d,
 
             # 1) lower state transition
             d_low_transitioned = model_t.forward(last_state)  # transition lower state
-            e_t_ = loss(h_low - d_low_transitioned)  # todo precision weighting
+            e_t_ = loss(z_low - d_low_transitioned)  # todo precision weighting
             e_t = torch.mean(e_t_)  # todo precision weighting
-            # if we want to predict transition function gradient instead of state change:
-            #e_t.backward(create_graph=True)
+            # e_t.backward(create_graph=True) if we want the true gradient instead of state change
             grad_t = (d_low_transitioned - last_state)  # state change from transition
             e_total = e_t
 
@@ -103,26 +100,26 @@ def GPC(model_h, model_d,
                   Compute dynamical top-down prediction. """
 
                   # 2) dynamical top-down prediction of transition from t -> t+dt_{l}
-                  TD_prediction_d = model_d.forward((d_high)) # dynamical prediction
+                  TD_prediction_d = model_d.forward((z_high)) # dynamical prediction
                   e_d_ = loss(grad_t - TD_prediction_d) # dynamical PE
-                  e_d = torch.mean(torch.matmul(d_var**-1, torch.reshape(e_d_, [batch_size, -1, 1]) )) # weighted PE
+                  e_d = torch.mean(torch.matmul(z_var**-1, torch.reshape(e_d_, [batch_size, -1, 1]) )) # weighted PE
                   e_total += e_d
             else:
                   """ Hierarchical update: Higher layer is a hierarchical layer. 
                   Compute higher layer transition & hierarchical top-down prediction. 
-                  HIGHER LAYER: last_state_high_t -> h_high_transitioned_{t+dt_{l+1}}
+                  HIGHER LAYER: last_state_high_t -> z_high_transitioned_{t+dt_{l+1}}
                   LOWER  LAYER: last_state_t -> skipped transitions -> d_low_transitioned_{t+dt_{l+1}}"""
 
                   # 2) hierarchical top-down prediction at t
-                  TD_prediction_h = model_h.forward((h_high))  # hierarchical prediction
+                  TD_prediction_h = model_h.forward((z_high))  # hierarchical prediction
                   e_h_ = loss((last_state - TD_prediction_h))  # hierarchical PE
-                  e_h = torch.mean(torch.matmul(h_var ** -1, torch.reshape(e_h_, [batch_size, -1, 1])))  # weighted PE
+                  e_h = torch.mean(torch.matmul(z_var ** -1, torch.reshape(e_h_, [batch_size, -1, 1])))  # weighted PE
 
                   # 3) hierarchical top-down prediction at t+dt_{l+1} # todo sampling over >1 steps
-                  h_high_transitioned = model_t_high.forward(last_state_high) # transition higher state
-                  TD_prediction_h2 = model_h.forward((h_high_transitioned))  # hierarchical prediction
-                  e_h2_ = loss((h_low - TD_prediction_h2))  # hierarchical PE
-                  e_h2 = torch.mean(torch.matmul(h_var ** -1, torch.reshape(e_h2_, [batch_size, -1, 1])))  # weighted PE
+                  z_high_transitioned = model_t_high.forward(last_state_high) # transition higher state
+                  TD_prediction_h2 = model_h.forward((z_high_transitioned))  # hierarchical prediction
+                  e_h2_ = loss((z_low - TD_prediction_h2))  # hierarchical PE
+                  e_h2 = torch.mean(torch.matmul(z_var ** -1, torch.reshape(e_h2_, [batch_size, -1, 1])))  # weighted PE
                   e_total += e_h + e_h2
 
             # compute total error and update variables
@@ -130,12 +127,11 @@ def GPC(model_h, model_d,
             for i, opt in enumerate(opt_list): opt.step() # step variable # todo skip optimizers with LR=0
 
       # return errors and updated variables
-      params = [model_h, model_d, model_t, h_low, torch.zeros_like(h_low), h_var, d_var, h_high, d_high]
+      params = [model_h, model_d, model_t, z_low, torch.zeros_like(z_low), z_var, torch.zeros_like(z_var), z_high, torch.zeros_like(z_high)]
       if dynamical: # higher layer is dynamical layer
             predictions = [p.detach().numpy() for p in [torch.zeros_like(TD_prediction_d), TD_prediction_d, d_low_transitioned]]
             return params, None, predictions, torch.zeros_like(e_d_), e_d_, e_t_
-      else: # higher layer is hierarchical layer
-            # TODO return first hierarchical prediction
+      else: # higher layer is hierarchical layer TODO return first hierarchical prediction
             predictions = [p.detach().numpy() for p in [TD_prediction_h2, torch.zeros_like(TD_prediction_h2), d_low_transitioned]]
             return params, None, predictions, e_h_, e_h2_, e_t_
 
@@ -221,9 +217,9 @@ if __name__ == '__main__':
 
                         params, deriv, preds, e_h, e_d, e_t = GPC(wl_h[i], wl_d[i],
                                                                   wl_t[i], wl_t[i+1],
-                                                                  inp_list_h[i], inp_list_d[i],
-                                                                  v_h_list[i], v_d_list[i],
-                                                                  inp_list_h[i+1], inp_list_d[i+1],
+                                                                  inp_list_h[i],
+                                                                  v_h_list[i],
+                                                                  inp_list_h[i+1],
                                                                   inp_list_save[i], inp_list_save[i+1])
                         wl_h[i], wl_d[i], wl_t[i], inp_list_h[i], \
                         inp_list_d[i], v_h_list[i], v_d_list[i], inp_list_h[i+1], inp_list_d[i + 1] = params
