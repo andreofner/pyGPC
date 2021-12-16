@@ -4,31 +4,50 @@ André Ofner 2021
 """
 
 import gym
-import sys, os
+import sys, os, math
 import numpy as np
 from gym.utils import seeding
 from gym.envs.registration import register as gym_register
 from tensorflow import keras
 import matplotlib.pyplot as plt
 from moviepy.editor import ImageSequenceClip
+from GPC import BATCH_SIZE, NOISE_SCALE, IMAGE_SIZE
+import torch
 
 """ Plotting helpers"""
-def plot_episode(frames, title=""):
-      """ episode video as gif """
-      clip = ImageSequenceClip(list(frames), fps=20)
-      clip.write_gif(str(PLOT_PATH)+str(title)+'.gif', fps=20, verbose=False)
+
+def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_video=True):
+      try:
+            predicts_plot = np.asarray([pred.squeeze() for pred in data[0]])
+            predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
+      except:
+            predicts_plot = np.asarray([pred.detach().numpy().squeeze() for pred in data[0]])
+            predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
+
+      # save episode as gif
+      if plot_video:
+            clip = ImageSequenceClip(list(predicts_plot*scale), fps=20)
+            clip.write_gif(str(PLOT_PATH) + str(title) + '.gif', fps=20, verbose=False)
+
+      # plot last frame
+      if plot:
+            plt.imshow(predicts_plot[-1])
+            plt.title(str(plt_title))
+            plt.colorbar()
+            plt.show()
+
 
 """ Moving MNIST in OpenAI Gym"""
 
 # environment settings
-AGENT_SIZE = 32
-NOISE_SCALE = 0.0 # add gaussian noise to images
-AGENT_STEP_SIZE = 1 # only for spatial actions
-# ACTION_NAMES = {0:"Previous frame",1:"Next frame",2:"Up",3:"Down",4:"Left",5:"Right"}
-ACTION_NAMES = {0:"Previous frame",1:"Next frame"}
+ACTION_NAMES = {0:"Previous frame",1:"Next frame"} #2:"Up",3:"Down",4:"Left",5:"Right"}
 ACTION_SPACE = list(ACTION_NAMES)
-VIDEO_MODE = False # disable actions controlling time
-OBSERVATION_SIZE = (AGENT_SIZE * 2) * (AGENT_SIZE * 2)  # size of observed patch
+
+# optional: spatial actions
+AGENT_SIZE = 32 # make smaller to move spatially
+AGENT_STEP_SIZE = 1 # only for spatial actions
+VIDEO_MODE = False # disables actions controlling time
+OBSERVATION_SIZE = (AGENT_SIZE*2) * (AGENT_SIZE*2)  # size of observed patch
 
 # logging and visualization settings
 VERBOSE = False
@@ -38,22 +57,13 @@ try:
 except:
       pass
 
-def load_moving_mnist(plot=False, nr_sequences=1000):
+def load_moving_mnist(nr_sequences=1000):
       """ Loads moving MNIST and saves to disk"""
       fpath = keras.utils.get_file("moving_mnist.npy","http://www.cs.toronto.edu/~nitish/unsupervised_video/mnist_test_seq.npy")
       dataset = np.load(fpath)
       dataset = np.swapaxes(dataset, 0, 1) # Swap the axes representing the number of frames and number of data samples.
       dataset = dataset[:nr_sequences, ...] # We'll pick out 1000 of the 10000 total examples and use those.
       dataset = np.expand_dims(dataset, axis=-1) # Add a channel dimension since the images are grayscale.
-      if plot:
-            print("Moving MNIST shape: " + str(dataset.shape))
-            fig, axes = plt.subplots(4, 5, figsize=(10, 8))
-            data_choice = 0 # select sequence to plot
-            for idx, ax in enumerate(axes.flat):
-                  ax.imshow(np.squeeze(dataset[data_choice][idx]), cmap="gray")
-                  ax.set_title(f"Frame {idx + 1}")
-                  ax.axis("off")
-            plt.show()
       return dataset
 
 class MnistEnv(gym.Env):
@@ -67,7 +77,7 @@ class MnistEnv(gym.Env):
             self.dataset = dataset
             if self.dataset == "moving_mnist": # moving MNIST dataset
                   class MovingAgent:
-                        """A single agent seeing a small input area and moves across time and space."""
+                        """A single agent seeing a (partial) frame and moves across time (and space)"""
                         def __init__(self):
                               self.agent_size = AGENT_SIZE   # size of area currently covered by the agent
                               self.pos_x = 32   # horizontal position of agent
@@ -76,7 +86,7 @@ class MnistEnv(gym.Env):
                               self.time_state = 0   # position in current sequence
                               self.step_size_xy = AGENT_STEP_SIZE # how large steps within frames are
 
-                  self.number_of_agents = 1
+                  self.number_of_agents = BATCH_SIZE
                   self.data = load_moving_mnist()
                   self.shape = 64, 64
                   self.nr_sequences = 1000 # sequences in dataset
@@ -133,7 +143,7 @@ class MnistEnv(gym.Env):
                               curr_agent.pos_x -= curr_agent.step_size_xy
                         elif action == 5:   # Move right
                               curr_agent.pos_x += curr_agent.step_size_xy
-                        # make sure agent position is within bounds of environment
+                        # make sure agent position is within spatial bounds of frame
                         curr_agent.pos_x = min(curr_agent.pos_x, self.shape[0] - curr_agent.agent_size - 1)
                         curr_agent.pos_x = max(curr_agent.pos_x, curr_agent.agent_size)
                         curr_agent.pos_y = min(curr_agent.pos_y, self.shape[1] - curr_agent.agent_size - 1)
@@ -155,24 +165,21 @@ class MnistEnv(gym.Env):
 
       @property
       def observed_state_sequential(self):
-            # create an image of the env for visualization purposes
-            # todo when moving through time this visualization works only with a single agent
+            # create an image of the env for visualization
             img = self.data[self.moving_agents[0].sequence_state, self.moving_agents[0].time_state]
             img = img.astype(np.float64) + self.noise_scale * np.random.rand(img.shape[0], img.shape[1], 1) * 255 - 127
             img = np.clip(img, 0, 255).astype(int)
             img_RGB = np.repeat(img, 3, 2)
             raw_frame = img
 
-            # now process the observations for each agent
+            # process the observations for each agent
             ca_obs = []
-
             for ca in self.moving_agents:
                   # get frame from sequence
                   img = self.data[ca.sequence_state, ca.time_state]
                   # add noise
                   img = img.astype(np.float64) + self.noise_scale * np.random.rand(img.shape[0], img.shape[1], 1) * 255 - 127
                   img = np.clip(img, 0, 255).astype(int)
-
                   agentobs = np.zeros_like(img)
                   state = [ca.time_state, ca.pos_x, ca.pos_y, ca.agent_size, ca.step_size_xy]
                   ca_obs.append([img, img_RGB, raw_frame, state, agentobs])
@@ -217,26 +224,10 @@ class MnistEnv1(MnistEnv):
             super().__init__(num_digits=1)
 
 
-class MnistEnv2(MnistEnv):
-      """ Two moving digits """
-      def __init__(self):
-            super().__init__(num_digits=2)
-
-
-class MnistEnv3(MnistEnv):
-      """ Three moving digits """
-      def __init__(self):
-            super().__init__(num_digits=3)
-
-
-""" Register as gym environment"""
-
-
 def register(id, entry_point, reward_threshold=900):
       assert id.startswith("Mnist-")
       gym_register(id=id, entry_point=entry_point,  reward_threshold=reward_threshold)
 
 
+""" Register as gym environment"""
 register(id='Mnist-s1-v0', entry_point='tools:MnistEnv1')
-register(id='Mnist-s2-v0', entry_point='tools:MnistEnv2')
-register(id='Mnist-s3-v0', entry_point='tools:MnistEnv3')
