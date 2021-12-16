@@ -13,27 +13,10 @@ import matplotlib.pyplot as plt
 from moviepy.editor import ImageSequenceClip
 
 """ Plotting helpers"""
-def plot_episode(frames, agent_frames, states_batch, max_visualized_agents=8, title=""):
-      """ save episode video as gif """
-      states_batch = states_batch.swapaxes(0,1)
+def plot_episode(frames, title=""):
+      """ episode video as gif """
       clip = ImageSequenceClip(list(frames), fps=20)
       clip.write_gif(str(PLOT_PATH)+str(title)+'.gif', fps=20, verbose=False)
-
-def visualize_episode_video(frames, agent_frames, states):
-      # visualize episode as video
-      frames = np.asarray(frames)
-      agent_frames = np.asarray(agent_frames)
-      states = np.asarray(states)
-      plot_episode(frames, agent_frames, states)
-
-def video(frames, title="", plot_path=None):
-      # save data seen by agent in this episode as gif
-      clip = ImageSequenceClip(list(frames), fps=20)
-      if plot_path is None:
-            clip.write_gif(str(PLOT_PATH)+''+str(title)+'.gif', fps=20, verbose=False)
-      else:
-            clip.write_gif(str(plot_path)+''+str(title)+'.gif', fps=20, verbose=False)
-
 
 """ Moving MNIST in OpenAI Gym"""
 
