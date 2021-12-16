@@ -5,21 +5,24 @@ André Ofner 2021
 
 import math
 import torch
+from tools import *
 import gym, numpy as np
 from torch.optim import SGD
 import matplotlib.pyplot as plt
-from tools import *
 
 class Model(torch.nn.Module):
-      """ Layer hierarchies with weights sharing """
-      def __init__(self, sizes=[], hidden_sizes=[8], bias=False, activations=[torch.nn.Identity()]):
+      """ Prediction weights """
+      def __init__(self, sizes=[], hidden_sizes=[], bias=True, activations=[]):
             super(Model, self).__init__()
             self.layers = []
             for i in range(0, len(sizes)-1, 2):
                   self.layers.append(
                         torch.nn.Sequential(
-                              torch.nn.Linear(sizes[i+1], hidden_sizes[int(i/2)], bias=bias), torch.nn.ReLU(),
-                              torch.nn.Linear(hidden_sizes[int(i/2)], sizes[i], bias=bias), activations[int(i/2)]
+                              torch.nn.Linear(sizes[i + 1], sizes[i], bias=bias),
+                              #torch.nn.Linear(sizes[i+1], hidden_sizes[int(i/2)], bias=bias),
+                              #torch.nn.ReLU(),
+                              #torch.nn.Linear(hidden_sizes[int(i/2)], sizes[i], bias=bias),
+                              activations[int(i/2)]
                         ))
 
 def predict(w_list, target=None, inp_list=None):
@@ -40,20 +43,20 @@ def GPC(model_h, model_d, model_t, model_t_high,
       """ Generalized Predictive Coding optimizer """
 
       # optimizers for state inference in current layer
-      opt_last_low = SGD([last_state], lr=0.1) # states l_{t}
-      opt_low = SGD([z_low], lr=0.1) # states l_{t+dt_{l+1}}
+      opt_last_low = SGD([last_state], lr=0.01) # states l_{t}
+      opt_low = SGD([z_low], lr=0.01) # states l_{t+dt_{l+1}}
 
       # optimizers for state inference in higher layer
-      opt_last_high = SGD([last_state_high], lr=1) # higher layer states l+1_{t}
-      opt_high = SGD([z_high], lr=1) # states l+1_{t+dt_{l+1}}
+      opt_last_high = SGD([last_state_high], lr=0.1) # higher layer states l+1_{t}
+      opt_high = SGD([z_high], lr=0.1) # states l+1_{t+dt_{l+1}}
 
       # optimizers for learning of weights between current and higher layer
-      opt_weights_h = SGD(list(model_h.parameters()), lr=0.01) # hierarchical weights l
-      opt_weights_d = SGD(list(model_d.parameters()), lr=0.01) # dynamical weights l
-      opt_weights_t = SGD(list(model_t.parameters()), lr=10) # dynamical weights l # todo LR
-      opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=0) # transition weights l+1 # todo LR
+      opt_weights_h = SGD(list(model_h.parameters()), lr=0.001) # hierarchical weights l
+      opt_weights_d = SGD(list(model_d.parameters()), lr=0.001) # dynamical weights l
+      opt_weights_t = SGD(list(model_t.parameters()), lr=0.01) # dynamical weights l
+      opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=0.01) # transition weights l+1
 
-      # optimizers for precision of prediction error in current layer
+      # optimizers for precision in current layer
       opt_var_h = SGD([z_var], lr=0.1)  # precision l
 
       # collect variables and optimizers
@@ -75,7 +78,7 @@ def GPC(model_h, model_d, model_t, model_t_high,
             z_low_transitioned = model_t.forward(last_state)  # transition lower state
             e_t_ = loss(z_low - z_low_transitioned)  # todo precision weighting
             e_t = torch.mean(e_t_)  # todo precision weighting
-            # e_t.backward(create_graph=True) if we want the true gradient instead of state change
+            # e_t.backward(create_graph=True) if we want the true gradient instead of state difference
             grad_t = (z_low_transitioned - last_state)  # state change from transition
             e_total = e_t
 
@@ -116,7 +119,7 @@ def GPC(model_h, model_d, model_t, model_t_high,
             predictions = [p.detach().numpy() for p in [torch.zeros_like(TD_prediction_d), TD_prediction_d, z_low_transitioned]]
             return params, None, predictions, torch.zeros_like(e_d_), e_d_, e_t_
       else: # higher layer is a hierarchical layer TODO return first hierarchical prediction
-            predictions = [p.detach().numpy() for p in [TD_prediction_h2, torch.zeros_like(TD_prediction_h2), z_low_transitioned]]
+            predictions = [p.detach().numpy() for p in [TD_prediction_h, TD_prediction_h2, z_low_transitioned]]
             return params, None, predictions, e_h_, e_h2_, e_t_
 
 BATCH_SIZE = 16 # batch of agents TODO fix batch size = 1
@@ -130,15 +133,13 @@ if __name__ == '__main__':
       obs = env.reset()
 
       """ Model setup"""
-      l_sizes = [IMAGE_SIZE,128, 128,64]
+      l_sizes = [IMAGE_SIZE,64, 64,32, 32,16]
+      hidden_sizes = [256, 256, 128]
 
       # output activation for each PC layer
       activations_h = [torch.nn.Sigmoid()] + [torch.nn.ReLU() for l in l_sizes[1::2]]
-      activations_d = [torch.nn.Sigmoid()] + [torch.nn.ReLU() for l in l_sizes[1::2]]
       activations_t = [torch.nn.Sigmoid()] + [torch.nn.ReLU() for l in l_sizes[1::2]]
-
-      # hidden layers within each PC layer. Activation is ReLU
-      hidden_sizes = [64 for l in l_sizes[1::2]]
+      activations_d = [torch.nn.Identity()] + [torch.nn.Identity() for l in l_sizes[1::2]]
 
       # shared weights
       l_sizes_t = []
@@ -150,7 +151,7 @@ if __name__ == '__main__':
       wl_d = [l for l in model_d.layers]
       wl_t = [l for l in model_t.layers]
 
-      # precision TODO transition error precision?
+      # precision TODO transition error precision
       v_h_list = [torch.stack([(torch.eye(l_sizes[::2][i])*0.9 + 0.1) for b in range(BATCH_SIZE)]).requires_grad_()
                         for i in range(len(l_sizes[::2]))] # prior hierarchical precision
 
@@ -167,23 +168,18 @@ if __name__ == '__main__':
       preds_h, preds_d, preds_t = [[] for _ in wl_d], [[] for _ in wl_d], [[] for _ in wl_d]
       inputs = [[]]
 
-      UPDATES = 5
-      actions = [1 for i in range(10)]# + [0 for i in range(10)] + [1 for i in range(10)] + [0 for i in range(10)]
+      UPDATES = 10
+      actions = [0 for i in range(20)]# + [0 for i in range(20)] + [1 for i in range(20)] + [0 for i in range(20)]
       for i, action in enumerate(actions):   # iterate over time steps
 
-            # get observation from gym
+            # get observation from gym and preprocess
             obs, rew, done, _ = env.step([action for b in range(BATCH_SIZE)])
-            input = torch.Tensor(obs['agent_image'])
-
-            # preprocess input
-            if True:
+            input = torch.Tensor(obs['agent_image'])/255
+            if True: # reduce size
                   input = input.reshape([BATCH_SIZE, -1, 64, 64])
-                  input = torch.nn.MaxPool2d((2, 2), stride=(4, 4), padding=(0,0))(input)
-                  input = input.reshape([BATCH_SIZE, -1, IMAGE_SIZE])
-                  input = torch.nn.Sigmoid()(input)
+                  input = torch.nn.MaxPool2d((2,2), stride=(4,4))(input).reshape([BATCH_SIZE, -1, IMAGE_SIZE])
 
             # update model
-            inputs[0].append(input[:1])
             for update in range(UPDATES):
 
                   # 1) predict
@@ -203,6 +199,7 @@ if __name__ == '__main__':
                         # collect variables for visualization
                         wl_h[i], wl_d[i], wl_t[i], inp_list_z[i], v_h_list[i], inp_list_z[i+1] = params
                         if update >= UPDATES - 1:
+                              inputs[0].append(input[:1])
                               preds_h[i].append(preds[0][:1])
                               preds_d[i].append(preds[1][:1])
                               preds_t[i].append(preds[2][:1])
