@@ -3,11 +3,11 @@ Differentiable Generalized Predictive Coding
 André Ofner 2021
 """
 
-import math
+import gym
 import torch
 from tools import *
-import gym, numpy as np
 from torch.optim import SGD
+import time, math, numpy as np
 import matplotlib.pyplot as plt
 
 class Model(torch.nn.Module):
@@ -19,9 +19,6 @@ class Model(torch.nn.Module):
                   self.layers.append(
                         torch.nn.Sequential(
                               torch.nn.Linear(sizes[i + 1], sizes[i], bias=bias),
-                              #torch.nn.Linear(sizes[i+1], hidden_sizes[int(i/2)], bias=bias),
-                              #torch.nn.ReLU(),
-                              #torch.nn.Linear(hidden_sizes[int(i/2)], sizes[i], bias=bias),
                               activations[int(i/2)]
                         ))
 
@@ -43,21 +40,21 @@ def GPC(model_h, model_d, model_t, model_t_high,
       """ Generalized Predictive Coding optimizer """
 
       # optimizers for state inference in current layer
-      opt_last_low = SGD([last_state], lr=0.01) # states l_{t}
-      opt_low = SGD([z_low], lr=0.01) # states l_{t+dt_{l+1}}
+      opt_last_low = SGD([last_state], lr=0.1) # states l_{t}
+      opt_low = SGD([z_low], lr=0.1) # states l_{t+dt_{l+1}}
 
       # optimizers for state inference in higher layer
       opt_last_high = SGD([last_state_high], lr=0.1) # higher layer states l+1_{t}
       opt_high = SGD([z_high], lr=0.1) # states l+1_{t+dt_{l+1}}
 
-      # optimizers for learning of weights between current and higher layer
-      opt_weights_h = SGD(list(model_h.parameters()), lr=0.1) # hierarchical weights l
-      opt_weights_d = SGD(list(model_d.parameters()), lr=0.1) # dynamical weights l
-      opt_weights_t = SGD(list(model_t.parameters()), lr=1)#1) # dynamical weights l
-      opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=1)#1) # transition weights l+1
+      # optimizers for weights
+      opt_weights_h = SGD(list(model_h.parameters()), lr=.1) # hierarchical weights l
+      opt_weights_d = SGD(list(model_d.parameters()), lr=.1) # dynamical weights l
+      opt_weights_t = SGD(list(model_t.parameters()), lr=10)#1) # dynamical weights l
+      opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=10)#1) # transition weights l+1
 
       # optimizers for precision in current layer
-      opt_var_h = SGD([z_var], lr=0.0)  # precision l
+      opt_var_h = SGD([z_var], lr=1)  # precision l
 
       # collect variables and optimizers
       p_list = list(model_h.parameters())+list(model_d.parameters())+\
@@ -122,9 +119,9 @@ def GPC(model_h, model_d, model_t, model_t_high,
             predictions = [p.detach().numpy() for p in [TD_prediction_h, TD_prediction_h2, z_low_transitioned]]
             return params, None, predictions, e_h_, e_h2_, e_t_
 
-BATCH_SIZE = 64 # batch of agents TODO fix batch size = 1
+BATCH_SIZE = 16 # batch of agents TODO fix batch size = 1
 NOISE_SCALE = 0.0 # add gaussian noise to images
-IMAGE_SIZE = 16*16 # image size after preprocessing
+IMAGE_SIZE = 32*32 # image size after preprocessing
 
 if __name__ == '__main__':
 
@@ -133,25 +130,23 @@ if __name__ == '__main__':
       obs = env.reset()
 
       """ Model setup"""
-      l_sizes = [IMAGE_SIZE,64, 64,32, 32,16]
-      hidden_sizes = [256, 256]
+      l_sizes = [IMAGE_SIZE,512, 512,32]
+      hidden_sizes = [0, 0]
 
       # output activation for each PC layer
-      activations_h = [torch.nn.Sigmoid()] + [torch.nn.ReLU() for l in l_sizes[1::2]]
-      activations_t = [torch.nn.Sigmoid()] + [torch.nn.ReLU() for l in l_sizes[1::2]]
+      activations_h = [torch.nn.Sigmoid()] + [torch.nn.Identity() for l in l_sizes[1::2]]
+      activations_t = [torch.nn.Sigmoid()] + [torch.nn.Identity() for l in l_sizes[1::2]]
       activations_d = [torch.nn.Identity()] + [torch.nn.Identity() for l in l_sizes[1::2]]
 
-      # shared weights
+      # weights
       l_sizes_t = []
       for i, s in enumerate(l_sizes[::2]): l_sizes_t += [s,s]
       model_h = Model(sizes=l_sizes, bias=True, activations=activations_h, hidden_sizes=hidden_sizes) # hierarchical
       model_d = Model(sizes=l_sizes, bias=True, activations=activations_d, hidden_sizes=hidden_sizes) # dynamical
       model_t = Model(sizes=l_sizes_t, bias=True, activations=activations_t, hidden_sizes=hidden_sizes) # transition
-      wl_h = [l for l in model_h.layers]
-      wl_d = [l for l in model_d.layers]
-      wl_t = [l for l in model_t.layers]
+      wl_h, wl_d, wl_t = [l for l in model_h.layers], [l for l in model_d.layers], [l for l in model_t.layers]
 
-      # precision TODO transition error precision
+      # precision
       v_h_list = [torch.stack([(torch.eye(l_sizes[::2][i])*0.9 + 0.1) for b in range(BATCH_SIZE)]).requires_grad_()
                         for i in range(len(l_sizes[::2]))] # prior hierarchical precision
 
@@ -161,23 +156,21 @@ if __name__ == '__main__':
       inp_list_save = inp_list_z # prior for state t
 
       # logging
-      errors_h = [[] for _ in wl_h] # hierarchical PE
-      errors_d = [[] for _ in wl_d] # dynamical PE
-      errors_t = [[] for _ in wl_d] # transition PE
-      derivs = [[] for _ in wl_d] # first derivative of transition function
-      preds_h, preds_d, preds_t = [[] for _ in wl_d], [[] for _ in wl_d], [[] for _ in wl_d]
+      err_h, err_d, err_t, derivs, preds_h, preds_d, preds_t = [[[] for _ in wl_h] for _ in range(7)]
       inputs = [[]]
 
-      UPDATES = 10
-      actions = [0 for i in range(5)] + [1 for i in range(5)]# + [1 for i in range(20)] + [0 for i in range(20)]
-      for i, action in enumerate(actions):   # iterate over time steps
+      UPDATES = 5
+      actions = [1 for i in range(100)]
+
+      # iterate over time steps
+      for i, action in enumerate(actions):
 
             # get observation from gym and preprocess
             obs, rew, done, _ = env.step([action for b in range(BATCH_SIZE)])
             input = torch.Tensor(obs['agent_image'])/255
             if True: # reduce size
                   input = input.reshape([BATCH_SIZE, -1, 64, 64])
-                  input = torch.nn.MaxPool2d((2,2), stride=(4,4))(input).reshape([BATCH_SIZE, -1, IMAGE_SIZE])
+                  input = torch.nn.MaxPool2d((2,2), stride=(2,2))(input).reshape([BATCH_SIZE, -1, IMAGE_SIZE])
 
             # update model
             for update in range(UPDATES):
@@ -203,9 +196,9 @@ if __name__ == '__main__':
                               preds_h[i].append(preds[0][:1])
                               preds_d[i].append(preds[1][:1])
                               preds_t[i].append(preds[2][:1])
-                              errors_h[i].append(e_h[:1].detach())
-                              errors_d[i].append(e_d[:1].detach())
-                              errors_t[i].append(e_t[:1].detach())
+                              err_h[i].append(e_h[:1].detach())
+                              err_d[i].append(e_d[:1].detach())
+                              err_t[i].append(e_t[:1].detach())
 
             # memorize last state
             for i in range(len(hidden_sizes)): inp_list_save[i] = inp_list_z[i] # memorize last state
@@ -214,7 +207,10 @@ if __name__ == '__main__':
       sequence_video(preds_t, title="transition_predictions", plt_title="Transition prediction")
       sequence_video(preds_d, title="dynamical_predictions", plt_title="Dynamical prediction")
       sequence_video(preds_h, title="hierarchical_predictions", plt_title="Hierarchical prediction")
-      sequence_video(errors_t, title="transition_errors", plt_title="Transition prediction error")
-      sequence_video(errors_d, title="dynamical_errors", plt_title="Dynamical prediction error")
-      sequence_video(errors_h, title="hierarchical_errors", plt_title="Hierarchical prediction error")
+      sequence_video(err_t, title="transition_errors", plt_title="Transition prediction error")
+      sequence_video(err_d, title="dynamical_errors", plt_title="Dynamical prediction error")
+      sequence_video(err_h, title="hierarchical_errors", plt_title="Hierarchical prediction error")
       sequence_video(inputs, title="model_inputs", plt_title="Input")
+
+      # todo lower layers without transition.
+      #  but: their change is still predicted top down and tries to be easy to predict
