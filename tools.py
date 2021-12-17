@@ -4,15 +4,15 @@ André Ofner 2021
 """
 
 import gym
-import sys, os, math
+import torch
 import numpy as np
+import sys, os, math
 from gym.utils import seeding
-from gym.envs.registration import register as gym_register
 from tensorflow import keras
 import matplotlib.pyplot as plt
 from moviepy.editor import ImageSequenceClip
+from gym.envs.registration import register as gym_register
 from GPC import BATCH_SIZE, NOISE_SCALE, IMAGE_SIZE
-import torch
 
 """ Plotting helpers"""
 
