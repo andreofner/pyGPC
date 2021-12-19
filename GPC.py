@@ -10,17 +10,23 @@ from torch.optim import SGD
 import time, math, numpy as np
 import matplotlib.pyplot as plt
 
+# todo
+# outgoing prediction codnitioned on hidden state?
+# no transition in lower layers?
+# transition precision
+# adaptive sampling / dt conditioning
+
+
 class Model(torch.nn.Module):
       """ Prediction weights """
-      def __init__(self, sizes=[], hidden_sizes=[], bias=True, activations=[]):
+      def __init__(self, sizes=[], bias=True, activations=[]):
             super(Model, self).__init__()
             self.layers = []
             for i in range(0, len(sizes)-1, 2):
                   self.layers.append(
                         torch.nn.Sequential(
                               torch.nn.Linear(sizes[i + 1], sizes[i], bias=bias),
-                              activations[int(i/2)]
-                        ))
+                              activations[int(i/2)]))
 
 def predict(w_list, target=None, inp_list=None):
       """ Backward pass through provided layers """
@@ -54,7 +60,7 @@ def GPC(model_h, model_d, model_t, model_t_high,
       opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=10)#1) # transition weights l+1
 
       # optimizers for precision in current layer
-      opt_var_h = SGD([z_var], lr=1)  # precision l
+      opt_var_h = SGD([z_var], lr=10)  # precision l
 
       # collect variables and optimizers
       p_list = list(model_h.parameters())+list(model_d.parameters())+\
@@ -121,7 +127,7 @@ def GPC(model_h, model_d, model_t, model_t_high,
 
 BATCH_SIZE = 16 # batch of agents TODO fix batch size = 1
 NOISE_SCALE = 0.0 # add gaussian noise to images
-IMAGE_SIZE = 32*32 # image size after preprocessing
+IMAGE_SIZE = 16*16 # image size after preprocessing
 
 if __name__ == '__main__':
 
@@ -130,20 +136,19 @@ if __name__ == '__main__':
       obs = env.reset()
 
       """ Model setup"""
-      l_sizes = [IMAGE_SIZE,512, 512,32]
-      hidden_sizes = [0, 0]
+      l_sizes = [IMAGE_SIZE,16, 16,16]
 
       # output activation for each PC layer
-      activations_h = [torch.nn.Sigmoid()] + [torch.nn.Identity() for l in l_sizes[1::2]]
-      activations_t = [torch.nn.Sigmoid()] + [torch.nn.Identity() for l in l_sizes[1::2]]
+      activations_h = [torch.nn.Sigmoid()] + [torch.nn.Sigmoid() for l in l_sizes[1::2]]
+      activations_t = [torch.nn.Sigmoid()] + [torch.nn.Sigmoid() for l in l_sizes[1::2]]
       activations_d = [torch.nn.Identity()] + [torch.nn.Identity() for l in l_sizes[1::2]]
 
       # weights
       l_sizes_t = []
       for i, s in enumerate(l_sizes[::2]): l_sizes_t += [s,s]
-      model_h = Model(sizes=l_sizes, bias=True, activations=activations_h, hidden_sizes=hidden_sizes) # hierarchical
-      model_d = Model(sizes=l_sizes, bias=True, activations=activations_d, hidden_sizes=hidden_sizes) # dynamical
-      model_t = Model(sizes=l_sizes_t, bias=True, activations=activations_t, hidden_sizes=hidden_sizes) # transition
+      model_h = Model(sizes=l_sizes, bias=True, activations=activations_h) # hierarchical
+      model_d = Model(sizes=l_sizes, bias=True, activations=activations_d) # dynamical
+      model_t = Model(sizes=l_sizes_t, bias=True, activations=activations_t) # transition
       wl_h, wl_d, wl_t = [l for l in model_h.layers], [l for l in model_d.layers], [l for l in model_t.layers]
 
       # precision
@@ -159,18 +164,18 @@ if __name__ == '__main__':
       err_h, err_d, err_t, derivs, preds_h, preds_d, preds_t = [[[] for _ in wl_h] for _ in range(7)]
       inputs = [[]]
 
-      UPDATES = 5
+      UPDATES = 10
       actions = [1 for i in range(100)]
 
-      # iterate over time steps
       for i, action in enumerate(actions):
 
             # get observation from gym and preprocess
             obs, rew, done, _ = env.step([action for b in range(BATCH_SIZE)])
             input = torch.Tensor(obs['agent_image'])/255
+            input = input.reshape([BATCH_SIZE, -1, IMAGE_SIZE])
             if True: # reduce size
                   input = input.reshape([BATCH_SIZE, -1, 64, 64])
-                  input = torch.nn.MaxPool2d((2,2), stride=(2,2))(input).reshape([BATCH_SIZE, -1, IMAGE_SIZE])
+                  input = torch.nn.MaxPool2d((2,2), stride=(4,4))(input).reshape([BATCH_SIZE, -1, IMAGE_SIZE])
 
             # update model
             for update in range(UPDATES):
@@ -179,7 +184,7 @@ if __name__ == '__main__':
                   inp_list_z = predict(wl_h, inp_list=inp_list_z) # hierarchical prediction
 
                   # 2) update
-                  for i in range(len(hidden_sizes)-1):
+                  for i in range(len(l_sizes[::2])-1):
 
                         # input at lowest layer
                         inp_list_z[0] = torch.tensor(input.clone().detach().float().squeeze()).unsqueeze(1)
@@ -201,7 +206,7 @@ if __name__ == '__main__':
                               err_t[i].append(e_t[:1].detach())
 
             # memorize last state
-            for i in range(len(hidden_sizes)): inp_list_save[i] = inp_list_z[i] # memorize last state
+            for i in range(len(l_sizes[::2])): inp_list_save[i] = inp_list_z[i] # memorize last state
 
       """ Plotting """
       sequence_video(preds_t, title="transition_predictions", plt_title="Transition prediction")
@@ -211,6 +216,3 @@ if __name__ == '__main__':
       sequence_video(err_d, title="dynamical_errors", plt_title="Dynamical prediction error")
       sequence_video(err_h, title="hierarchical_errors", plt_title="Hierarchical prediction error")
       sequence_video(inputs, title="model_inputs", plt_title="Input")
-
-      # todo lower layers without transition.
-      #  but: their change is still predicted top down and tries to be easy to predict
