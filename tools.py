@@ -3,8 +3,12 @@ Tools for plotting and creating OpenAI gym environments from datasets
 André Ofner 2021
 """
 
+
+# todo bacth size > 1 --> need to select next BATCH not seq in env..
+
 import gym
 import torch
+import random
 import numpy as np
 import sys, os, math
 from gym.utils import seeding
@@ -17,12 +21,14 @@ from GPC import BATCH_SIZE, NOISE_SCALE, IMAGE_SIZE
 """ Plotting helpers"""
 
 def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_video=True):
+
       try:
             predicts_plot = np.asarray([pred.squeeze() for pred in data[0]])
             predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
       except:
             predicts_plot = np.asarray([pred.detach().numpy().squeeze() for pred in data[0]])
             predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
+
 
       # save episode as gif
       if plot_video:
@@ -82,7 +88,7 @@ class MnistEnv(gym.Env):
                               self.agent_size = AGENT_SIZE   # size of area currently covered by the agent
                               self.pos_x = 32   # horizontal position of agent
                               self.pos_y = 32   # vertical position of agent
-                              self.sequence_state = 0   # ID of currently observed sequence
+                              self.sequence_state = random.randint(0,BATCH_SIZE-1)  # ID of currently observed sequence
                               self.time_state = 0   # position in current sequence
                               self.step_size_xy = AGENT_STEP_SIZE # how large steps within frames are
 
@@ -177,12 +183,14 @@ class MnistEnv(gym.Env):
             for ca in self.moving_agents:
                   # get frame from sequence
                   img = self.data[ca.sequence_state, ca.time_state]
+
                   # add noise
-                  img = img.astype(np.float64) + self.noise_scale * np.random.rand(img.shape[0], img.shape[1], 1) * 255 - 127
-                  img = np.clip(img, 0, 255).astype(int)
+                  #img = img.astype(np.float64) + self.noise_scale * np.random.rand(img.shape[0], img.shape[1], 1) * 255 - 127
+                  #img = np.clip(img, 0, 255).astype(int)
+
                   agentobs = np.zeros_like(img)
                   state = [ca.time_state, ca.pos_x, ca.pos_y, ca.agent_size, ca.step_size_xy]
-                  ca_obs.append([img, img_RGB, raw_frame, state, agentobs])
+                  ca_obs.append([img, np.zeros_like(img_RGB), np.zeros_like(raw_frame), state, agentobs])
 
             return ca_obs
 
