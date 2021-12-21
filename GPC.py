@@ -17,26 +17,28 @@ class Model(torch.nn.Module):
             super(Model, self).__init__()
             self.layers = [] # hierarchical layers
             self.layers_d = [] # dynamical layers for each hierarchical layer
-            self.precisions = [] # v_h_list # hierarchical precision
-            self.inp_list_z = []
-            self.inp_list_save = []
+            self.precisions = [] # hierarchical precision
+            self.states_curr = [] # states at time t
+            self.states_last = [] # states at time t+dt
+
             for i in range(0, len(sizes)-1, 2):
                   self.layers.append(Sequential(Linear(sizes[i + 1], sizes[i], bias), act[int(i/2)]))
-                  if len(sizes_d) > 0: self.layers_d.append(Model(sizes_d, bias_d, act_d))
+                  if len(sizes_d) > 0:
+                        self.layers_d.append(Model([sizes[i],sizes[i]], bias_d, act_d))
+                      # todo add higher dynamical layers
                   self.precisions.append(torch.stack([(torch.eye(sizes[i]) * 0.9 + 0.1) for _ in range(BATCH_SIZE)]).requires_grad_())
 
       def get_weights_h(self, layer_h):
             """ Hierarchical prediction weights """
-            return [l for l in self.layers]
-
-      def get_weights_t(self, layer_h):
-            """ Transition weights (lowest dynamical layer) """
-            return [l[0] for l in self.layers_d[layer_h]]
+            return self.layers[layer_h]
 
       def get_weights_d(self, layer_h, layer_d):
             """ Dynamical weights """
-            return [l for l in self.layers_d[layer_h]]
+            return self.layers_d[layer_h].layers[layer_d]
 
+      def get_weights_t(self, layer_h):
+            """ Transition weights (lowest dynamical layer) """
+            return self.get_weights_d(layer_h, 0)
 
 def predict(w_list, target=None, inp_list=None):
       """ Backward pass through provided layers """
@@ -49,10 +51,7 @@ def predict(w_list, target=None, inp_list=None):
       return list(reversed(inp_list))
 
 
-def GPC(model_h, model_d, model_t, model_t_high,
-        z_low, z_var, z_high,
-        last_state, last_state_high,
-        loss=torch.abs, dynamical=False):
+def GPC(model, layer, loss=torch.abs, dynamical=False, model_h=None):
       """ Generalized Predictive Coding optimizer
 
       Perception:
@@ -69,6 +68,16 @@ def GPC(model_h, model_d, model_t, model_t_high,
             - Dynamical predictions (change in generalised coordinates) for the current cause can be generated using dynamical layers.
 
       """
+
+      model_h = model.get_weights_h(layer_h=layer)
+      model_d = model.get_weights_d(layer_h=layer, layer_d=0)
+      model_t = model.get_weights_t(layer_h=layer)
+      model_t_high = model.get_weights_t(layer_h=layer+1)
+      z_low = model.states_curr[layer]
+      z_high = model.states_curr[layer+1]
+      z_var = model.precisions[layer]
+      last_state = model.states_last[layer]
+      last_state_high = model.states_last[layer+1]
 
       # optimizers for state inference in current layer
       opt_last_low = SGD([last_state], lr=0) # states l_{t}
@@ -145,7 +154,7 @@ def GPC(model_h, model_d, model_t, model_t_high,
             return params, None, predictions, torch.zeros_like(e_d_), e_d_, e_t_
       else: # higher layer is a hierarchical layer TODO return first hierarchical prediction
             predictions = [p.detach().numpy() for p in [TD_prediction_h, TD_prediction_h, TD_prediction_h]]
-            return params, None, predictions, e_h_, e_h2_, e_t_
+            return predictions, e_h_, e_h2_, e_t_
 
 BATCH_SIZE = 4 # batch of agents TODO fix batch size = 1
 NOISE_SCALE = 0.0 # add gaussian noise to images
@@ -169,33 +178,16 @@ if __name__ == '__main__':
       # weights
       l_sizes_t = []
       for i, s in enumerate(l_sizes[::2]): l_sizes_t += [s,s]
+      model_h = Model(sizes=l_sizes, bias=True, act=activations_h,
+                      sizes_d=l_sizes_t, bias_d=True, act_d=activations_d)
 
-      if False:
-            model_h = Model(sizes=l_sizes, bias=True, act=activations_h) # hierarchical
-            model_d = Model(sizes=l_sizes, bias=True, act=activations_d) # dynamical
-            model_t = Model(sizes=l_sizes_t, bias=True, act=activations_t) # transition
-      else:
-            model_h = Model(sizes=l_sizes, bias=True, act=activations_h) # hierarchical
-            model_d = Model(sizes=l_sizes, bias=True, act=activations_d) # dynamical
-            model_t = Model(sizes=l_sizes_t, bias=True, act=activations_t) # transition
-
-
-      wl_h, wl_d, wl_t = [l for l in model_h.layers], [l for l in model_d.layers], [l for l in model_t.layers]
-
-      # precision
-      if False:
-            v_h_list = [torch.stack([(torch.eye(l_sizes[::2][i])*0.9 + 0.1) for b in range(BATCH_SIZE)]).requires_grad_()
-                              for i in range(len(l_sizes[::2]))] # prior hierarchical precision
-      else:
-            v_h_list = model_h.precisions
-
-      # state priors
-      target = torch.tensor(torch.tensor([1 for i in range(l_sizes[-1])]).unsqueeze(0).repeat(BATCH_SIZE,1,1)*.1)
-      inp_list_z = predict(wl_h, target=target.float(), inp_list=None) # prior for state t+dt
-      inp_list_save = inp_list_z # prior for state t
+      # precision & state priors
+      model_h.target = torch.tensor(torch.tensor([1 for i in range(l_sizes[-1])]).unsqueeze(0).repeat(BATCH_SIZE,1,1)*.1)
+      model_h.states_curr = predict(model_h.layers, target=model_h.target.float(), inp_list=None) # prior for state t+dt
+      model_h.states_last = model_h.states_curr # prior for state t
 
       # logging
-      err_h, err_d, err_t, derivs, preds_h, preds_d, preds_t = [[[] for _ in wl_h] for _ in range(7)]
+      err_h, err_d, err_t, preds_h, preds_d, preds_t = [[[] for _ in model_h.layers] for _ in range(6)]
       inputs = [[]]
 
       UPDATES = 1
@@ -207,7 +199,7 @@ if __name__ == '__main__':
             # get observation from gym and preprocess
             obs, rew, done, _ = env.step([action for b in range(BATCH_SIZE)])
             input = torch.Tensor(obs['agent_image'])/255
-            if True: # reduce size
+            if True: # reduce input size
                   input = input.reshape([BATCH_SIZE, -1, 64, 64])
                   input = torch.nn.MaxPool2d((2,2), stride=(2,2))(input).reshape([BATCH_SIZE, -1, IMAGE_SIZE])
 
@@ -215,21 +207,19 @@ if __name__ == '__main__':
             for update in range(UPDATES):
 
                   # 1) predict
-                  inp_list_z = predict(wl_h, inp_list=inp_list_z) # hierarchical prediction
+                  # todo order of inputs, order of propagation, prediction needed?
+                  states_curr = predict(model_h.layers, inp_list=model_h.states_curr) # hierarchical prediction
 
                   # 2) update
                   for i in range(len(hidden_sizes)-1):
 
                         # input at lowest layer
-                        inp_list_z[0] = torch.tensor(input.clone().detach().float().squeeze()).unsqueeze(1)
+                        model_h.states_curr[0] = torch.tensor(input.clone().detach().float().squeeze()).unsqueeze(1)
 
                         # update all trainable variables
-                        params, deriv, preds, e_h, e_d, e_t = GPC(wl_h[i], wl_d[i], wl_t[i], wl_t[i+1],
-                                                                  inp_list_z[i], v_h_list[i], inp_list_z[i+1],
-                                                                  inp_list_save[i], inp_list_save[i+1])
+                        preds, e_h, e_d, e_t = GPC(model_h, layer=i)
 
                         # collect variables for visualization
-                        wl_h[i], wl_d[i], wl_t[i], inp_list_z[i], v_h_list[i], inp_list_z[i+1] = params
                         if update >= UPDATES - 1:
                               inputs[0].append(input[:1])
                               preds_h[i].append(preds[0][:1])
@@ -240,7 +230,8 @@ if __name__ == '__main__':
                               err_t[i].append(e_t[:1].detach())
 
             # memorize last state
-            for i in range(len(hidden_sizes)): inp_list_save[i] = inp_list_z[i] # memorize last state
+            for i in range(len(hidden_sizes)):
+                  model_h.states_last[i] = model_h.states_curr[i]
 
       """ Plotting """
       sequence_video(preds_t, title="transition_predictions", plt_title="Transition prediction")
