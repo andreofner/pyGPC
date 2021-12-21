@@ -23,22 +23,18 @@ class Model(torch.nn.Module):
 
             for i in range(0, len(sizes)-1, 2):
                   self.layers.append(Sequential(Linear(sizes[i + 1], sizes[i], bias), act[int(i/2)]))
-                  if len(sizes_d) > 0:
+                  if len(sizes_d) > 0: # todo higher dynamical layers
                         self.layers_d.append(Model([sizes[i],sizes[i]], bias_d, act_d))
-                      # todo add higher dynamical layers
                   self.precisions.append(torch.stack([(torch.eye(sizes[i]) * 0.9 + 0.1) for _ in range(BATCH_SIZE)]).requires_grad_())
 
-      def get_weights_h(self, layer_h):
-            """ Hierarchical prediction weights """
-            return self.layers[layer_h]
+      def w_h(self, l): # Hierarchical prediction weights
+            return self.layers[l]
 
-      def get_weights_d(self, layer_h, layer_d):
-            """ Dynamical weights """
-            return self.layers_d[layer_h].layers[layer_d]
+      def w_d(self, l, l_d): # Dynamical weights
+            return self.layers_d[l].layers[l_d]
 
-      def get_weights_t(self, layer_h):
-            """ Transition weights (lowest dynamical layer) """
-            return self.get_weights_d(layer_h, 0)
+      def w_t(self, l): # Transition weights (lowest dynamical layer)
+            return self.w_d(l, 0)
 
 def predict(w_list, target=None, inp_list=None):
       """ Backward pass through provided layers """
@@ -51,33 +47,18 @@ def predict(w_list, target=None, inp_list=None):
       return list(reversed(inp_list))
 
 
-def GPC(model, layer, loss=torch.abs, dynamical=False, model_h=None):
-      """ Generalized Predictive Coding optimizer
+def GPC(m, l, loss=torch.abs, dynamical=False, model_h=None):
+      """ Generalized Predictive Coding optimizer """
 
-      Perception:
-      Cause states v (hierarchy describing the state of the model):
-            - Predict lower hierarchical layer activity
-
-      Hidden states x (dynamical hierarchy describing the state of a single layer):
-            - Predict lower hierarchical layer activity (jointly with the inferred causal state)
-            - Lowest layer predicts transitioned state
-            - Higher dynamical layers predict the change in lower dynamical layers (higher order derivatives)
-
-      Prediction:
-            - Cause predictions (prior generalised coordinates) can be generated using higher hierarchical layers.
-            - Dynamical predictions (change in generalised coordinates) for the current cause can be generated using dynamical layers.
-
-      """
-
-      model_h = model.get_weights_h(layer_h=layer)
-      model_d = model.get_weights_d(layer_h=layer, layer_d=0)
-      model_t = model.get_weights_t(layer_h=layer)
-      model_t_high = model.get_weights_t(layer_h=layer+1)
-      z_low = model.states_curr[layer]
-      z_high = model.states_curr[layer+1]
-      z_var = model.precisions[layer]
-      last_state = model.states_last[layer]
-      last_state_high = model.states_last[layer+1]
+      model_h = m.w_h(l=l)
+      model_d = m.w_d(l=l, l_d=0)
+      model_t = m.w_t(l=l)
+      model_t_high = m.w_t(l=l+1)
+      z_low = m.states_curr[l]
+      z_high = m.states_curr[l+1]
+      z_var = m.precisions[l]
+      last_state = m.states_last[l]
+      last_state_high = m.states_last[l+1]
 
       # optimizers for state inference in current layer
       opt_last_low = SGD([last_state], lr=0) # states l_{t}
@@ -217,7 +198,7 @@ if __name__ == '__main__':
                         model_h.states_curr[0] = torch.tensor(input.clone().detach().float().squeeze()).unsqueeze(1)
 
                         # update all trainable variables
-                        preds, e_h, e_d, e_t = GPC(model_h, layer=i)
+                        preds, e_h, e_d, e_t = GPC(model_h, i)
 
                         # collect variables for visualization
                         if update >= UPDATES - 1:
