@@ -12,7 +12,7 @@ from tensorflow import keras
 import matplotlib.pyplot as plt
 from moviepy.editor import ImageSequenceClip
 from gym.envs.registration import register as gym_register
-from GPC import BATCH_SIZE, NOISE_SCALE, IMAGE_SIZE
+from GPC import BATCH_SIZE, IMAGE_SIZE
 
 """ Plotting helpers"""
 
@@ -25,13 +25,11 @@ def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_vid
             predicts_plot = np.asarray([pred.detach().numpy().squeeze() for pred in data[0]])
             predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
 
-      # save episode as gif
-      if plot_video:
+      if plot_video: # save episode as gif
             clip = ImageSequenceClip(list(predicts_plot*scale), fps=20)
             clip.write_gif(str(PLOT_PATH) + str(title) + '.gif', fps=20, verbose=False)
 
-      # plot last frame
-      if plot:
+      if plot: # plot last frame
             plt.imshow(predicts_plot[-1])
             plt.title(str(plt_title))
             plt.colorbar()
@@ -69,7 +67,7 @@ def load_moving_mnist(nr_sequences=1000):
 
 class MnistEnv(gym.Env):
       """ See https://github.com/jbinas/gym-mnist  for static version"""
-      def __init__(self, num_digits=2, dataset="moving_mnist", max_steps=100, noise_scale=NOISE_SCALE, seed=1337):
+      def __init__(self, num_digits=2, dataset="moving_mnist", max_steps=100, noise_scale=0., seed=1337):
             self.shape = 28, num_digits * 28
             self.num_sym = num_digits
             self.max_steps = max_steps
@@ -178,11 +176,6 @@ class MnistEnv(gym.Env):
             for ca in self.moving_agents:
                   # get frame from sequence
                   img = self.data[ca.sequence_state, ca.time_state]
-
-                  # add noise
-                  #img = img.astype(np.float64) + self.noise_scale * np.random.rand(img.shape[0], img.shape[1], 1) * 255 - 127
-                  #img = np.clip(img, 0, 255).astype(int)
-
                   agentobs = np.zeros_like(img)
                   state = [ca.time_state, ca.pos_x, ca.pos_y, ca.agent_size, ca.step_size_xy]
                   ca_obs.append([img, np.zeros_like(img_RGB), np.zeros_like(raw_frame), state, agentobs])
@@ -227,10 +220,5 @@ class MnistEnv1(MnistEnv):
             super().__init__(num_digits=1)
 
 
-def register(id, entry_point, reward_threshold=900):
-      assert id.startswith("Mnist-")
-      gym_register(id=id, entry_point=entry_point,  reward_threshold=reward_threshold)
-
-
 """ Register as gym environment"""
-register(id='Mnist-s1-v0', entry_point='tools:MnistEnv1')
+gym_register(id='Mnist-s1-v0', entry_point='tools:MnistEnv1',  reward_threshold=900)
