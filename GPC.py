@@ -25,7 +25,7 @@ class Model(torch.nn.Module):
                   self.layers.append(Sequential(Linear(sizes[i + 1], sizes[i], bias), act[int(i/2)]))
                   if len(sizes_d) > 0: # todo higher dynamical layers
                         self.layers_d.append(Model([sizes[i],sizes[i]], bias_d, act_d))
-                  self.prec.append(torch.stack([(torch.eye(sizes[i])*1 + 0) for _ in range(BATCH_SIZE)]).requires_grad_())
+                  self.prec.append(torch.stack([(torch.eye(sizes[i])*0.9 + 0.1) for _ in range(BATCH_SIZE)]).requires_grad_())
 
       def w_h(self, l): return self.layers[l] # Hierarchical weights
       def w_d(self, l, l_d): return self.layers_d[l].layers[l_d] # Dynamical weights
@@ -37,10 +37,11 @@ class Model(torch.nn.Module):
             {'params': [self.currState[l]], 'lr': 100}, # state l+1, t+dt
             {'params': [self.currState[l+1]], 'lr': 100}, # state l+1, t
             {'params': list(self.w_h(l=l).parameters()), 'lr': 100}, # hierarchical weights l
-            {'params': list(self.w_d(l=l,l_d=0).parameters()), 'lr': 100}]  # dynamical weights l
+            {'params': list(self.w_d(l=l,l_d=0).parameters()), 'lr': 100}, # dynamical weights l
+            {'params': [self.prec[l]], 'lr': 0.1}]  # precision l
 
       def predict(self, target=None, states=None):
-            """ Backward pass through provided layers """
+            """ Backward pass through layers """
             states = [target] if states is None else [states[-1]]
             for w in list(reversed(self.layers)): states.append(w(states[-1]).detach())
             return list(reversed(states))
@@ -58,11 +59,14 @@ def GPC(m, l, loss=torch.square, dynamical=False):
 
       if dynamical: # dynamical top-down prediction
             pred_h = m.w_h(l=l, l_d=1).forward((m.currState[l+1])) # dynamical prediction
-            e_h = loss((m.currState[l]-m.lastState[l]) - pred_h) # dynamical PE (state change or grad)
+            e_h = loss((m.currState[l] - m.lastState[l]) - pred_h)  # dynamical PE (state change or grad)
+            if LEARN_PRECISION: torch.matmul(m.prec[l]**-1, torch.reshape(e_h, [BATCH_SIZE, -1, 1]))
             e_total += torch.mean(e_h)
+
       else: # hierarchical top-down prediction
             pred_h = m.w_h(l=l).forward((m.currState[l+1])) # hierarchical prediction
             e_h = loss((m.currState[l] - pred_h)) # hierarchical PE at t
+            if LEARN_PRECISION: torch.matmul(m.prec[l]**-1, torch.reshape(e_h, [BATCH_SIZE, -1, 1]))
             e_total += torch.mean(e_h)
 
       e_total.backward() # compute gradients
@@ -73,6 +77,7 @@ UPDATES = 5 # model updates per input
 ACTIONS = [1 for i in range(100)] # actions in Moving MNIST
 BATCH_SIZE = 8 # batch of agents
 IMAGE_SIZE = 32*32 # image size after preprocessing
+LEARN_PRECISION = True
 
 if __name__ == '__main__':
 
