@@ -3,11 +3,7 @@ Tools for plotting and creating OpenAI gym environments from datasets
 André Ofner 2021
 """
 
-
-# todo bacth size > 1 --> need to select next BATCH not seq in env..
-
 import gym
-import torch
 import random
 import numpy as np
 import sys, os, math
@@ -28,7 +24,6 @@ def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_vid
       except:
             predicts_plot = np.asarray([pred.detach().numpy().squeeze() for pred in data[0]])
             predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
-
 
       # save episode as gif
       if plot_video:
