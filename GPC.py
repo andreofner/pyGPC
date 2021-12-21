@@ -11,6 +11,15 @@ import time, math, numpy as np
 import matplotlib.pyplot as plt
 from torch.nn import Linear, Sequential
 
+# todo pretrain decoder weights --> freeze! (for initial results..)
+# generally: we need disentangled representations --> more layers
+# --> as disentangling happens only with many layers in equilibrium
+# or some KL divergence term?..
+# whats wrong with large batches?
+# ---> check precision, it should allow to learn disentangled even with batch size 1..
+# --> no precision wont prevent overfitting. so rather use LR states low?..
+
+
 class Model(torch.nn.Module):
       """ Hierarchical and dynamical weights """
       def __init__(self, sizes, bias, act, sizes_d=[], bias_d=True, act_d=[]):
@@ -25,7 +34,7 @@ class Model(torch.nn.Module):
                   self.layers.append(Sequential(Linear(sizes[i + 1], sizes[i], bias), act[int(i/2)]))
                   if len(sizes_d) > 0: # todo higher dynamical layers
                         self.layers_d.append(Model([sizes[i],sizes[i]], bias_d, act_d))
-                  self.precisions.append(torch.stack([(torch.eye(sizes[i]) * 0.9 + 0.1) for _ in range(BATCH_SIZE)]).requires_grad_())
+                  self.precisions.append(torch.stack([(torch.eye(sizes[i]) * 9.9 + 0.1) for _ in range(BATCH_SIZE)]).requires_grad_())
 
       def w_h(self, l): # Hierarchical prediction weights
             return self.layers[l]
@@ -47,40 +56,30 @@ def predict(w_list, target=None, inp_list=None):
       return list(reversed(inp_list))
 
 
-def GPC(m, l, loss=torch.abs, dynamical=False, model_h=None):
+def GPC(m, l, loss=torch.abs, dynamical=False):
       """ Generalized Predictive Coding optimizer """
 
-      model_h = m.w_h(l=l)
-      model_d = m.w_d(l=l, l_d=0)
-      model_t = m.w_t(l=l)
-      model_t_high = m.w_t(l=l+1)
-      z_low = m.states_curr[l]
-      z_high = m.states_curr[l+1]
-      z_var = m.precisions[l]
-      last_state = m.states_last[l]
-      last_state_high = m.states_last[l+1]
-
       # optimizers for state inference in current layer
-      opt_last_low = SGD([last_state], lr=.1) # states l_{t}
-      opt_low = SGD([z_low], lr=.1) # states l_{t+dt_{l+1}}
+      opt_last_low = SGD([m.states_last[l]], lr=.01) # states l_{t}
+      opt_low = SGD([m.states_curr[l]], lr=.01) # states l_{t+dt_{l+1}}
 
       # optimizers for state inference in higher layer
-      opt_last_high = SGD([last_state_high], lr=.1) # higher layer states l+1_{t}
-      opt_high = SGD([z_high], lr=.1) # states l+1_{t+dt_{l+1}}
+      opt_last_high = SGD([m.states_last[l+1]], lr=.01) # higher layer states l+1_{t}
+      opt_high = SGD([m.states_curr[l+1]], lr=.01) # states l+1_{t+dt_{l+1}}
 
       # optimizers for weights
-      opt_weights_h = SGD(list(model_h.parameters()), lr=.000001) # hierarchical weights l
-      opt_weights_d = SGD(list(model_d.parameters()), lr=.000001) # dynamical weights l
-      opt_weights_t = SGD(list(model_t.parameters()), lr=.000001)#1) # dynamical weights l
-      opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=.000001)#1) # transition weights l+1
+      opt_weights_h = SGD(list(m.w_h(l=l).parameters()), lr=.001) # hierarchical weights l
+      opt_weights_d = SGD(list(m.w_d(l=l, l_d=0).parameters()), lr=.001) # dynamical weights l
+      opt_weights_t = SGD(list(m.w_t(l=l).parameters()), lr=.001)#1) # dynamical weights l
+      opt_weights_t_high = SGD(list(m.w_t(l=l+1).parameters()), lr=.001)#1) # transition weights l+1
 
       # optimizers for precision in current layer
-      opt_var_h = SGD([z_var], lr=.1)  # precision l
+      opt_var_h = SGD([m.precisions[l]], lr=.1)  # precision l
 
       # collect variables and optimizers
-      p_list = list(model_h.parameters())+list(model_d.parameters())+\
-               list(model_t.parameters())+list(model_t_high.parameters())+\
-               [z_low, z_var, z_high, last_state, last_state_high]
+      p_list = list(m.w_h(l=l).parameters())+list(m.w_d(l=l, l_d=0).parameters())+\
+               list(m.w_t(l=l).parameters())+list(m.w_t(l=l+1).parameters())+\
+               [m.states_curr[l], m.precisions[l], m.states_curr[l+1], m.states_last[l], m.states_last[l+1]]
       opt_list = [opt_weights_h, opt_weights_d, opt_low, opt_var_h, opt_high,
                   opt_weights_t, opt_weights_t_high, opt_last_low, opt_last_high]
 
@@ -93,26 +92,26 @@ def GPC(m, l, loss=torch.abs, dynamical=False, model_h=None):
             SGD(p_list, lr=0).zero_grad() # reset grads
 
             # 1) dynamical hidden state prediction
-            change = (z_low - last_state)  # actual change of hidden state
+            change = (m.states_curr[l] - m.states_last[l])  # actual change of hidden state
             # e_t.backward(create_graph=True) for true gradient instead of state difference
-            pred_change = model_t.forward(last_state)  # predicted change of hidden state
-            e_t_ = loss(pred_change - z_low)  #  change todo precision weighting
+            pred_change = m.w_t(l=l).forward(m.states_last[l])  # predicted change of hidden state
+            e_t_ = loss(pred_change - m.states_curr[l])  #  change todo precision weighting
             e_total = torch.mean(e_t_)  # todo precision weighting
-            #z_low_transitioned = model_t.forward(last_state)  # transition lower state
+            #m.states_curr[l]_transitioned = m.w_t(l=l).forward(m.states_last[l])  # transition lower state
 
             if dynamical: # Higher layer is dynamical
                   # 2) dynamical top-down prediction of transition from t -> t+dt_{l}
-                  TD_prediction_d = model_d.forward((z_high)) # dynamical prediction
+                  TD_prediction_d = m.w_d(l=l, l_d=0).forward((m.states_curr[l+1])) # dynamical prediction
                   e_d_ = loss(change - TD_prediction_d) # dynamical PE
-                  e_d = torch.mean(torch.matmul(z_var**-1, torch.reshape(e_d_, [BATCH_SIZE, -1, 1]) )) # weighted PE
+                  e_d = torch.mean(torch.matmul(m.precisions[l]**-1, torch.reshape(e_d_, [BATCH_SIZE, -1, 1]) )) # weighted PE
                   e_total += e_d
             else: # Higher layer is hierarchical
                   # 2) hierarchical top-down prediction
-                  TD_prediction_h = model_h.forward((z_high))  # hierarchical prediction
-                  e_h_ = loss((last_state - TD_prediction_h))  # hierarchical PE at t
-                  e_h = torch.mean(torch.matmul(z_var ** -1, torch.reshape(e_h_, [BATCH_SIZE, -1, 1])))  # weighted PE
-                  e_h2_ = loss((z_low - TD_prediction_h))  # hierarchical PE at t+dt_{l+1}
-                  e_h2 = torch.mean(torch.matmul(z_var ** -1, torch.reshape(e_h2_, [BATCH_SIZE, -1, 1])))  # weighted PE
+                  TD_prediction_h = m.w_h(l=l).forward((m.states_curr[l+1]))  # hierarchical prediction
+                  e_h_ = loss((m.states_last[l] - TD_prediction_h))  # hierarchical PE at t
+                  e_h = torch.mean(torch.matmul(m.precisions[l] ** -1, torch.reshape(e_h_, [BATCH_SIZE, -1, 1])))  # weighted PE
+                  e_h2_ = loss((m.states_curr[l] - TD_prediction_h))  # hierarchical PE at t+dt_{l+1}
+                  e_h2 = torch.mean(torch.matmul(m.precisions[l] ** -1, torch.reshape(e_h2_, [BATCH_SIZE, -1, 1])))  # weighted PE
                   e_total += e_h# + e_h2
 
             # compute total error and update variables
@@ -120,7 +119,7 @@ def GPC(m, l, loss=torch.abs, dynamical=False, model_h=None):
             for i, opt in enumerate(opt_list): opt.step() # step variable # todo skip optimizers with LR=0
 
       # return errors and updated variables
-      params = [model_h, model_d, model_t, z_low, z_var, z_high]
+      params = [m.w_h(l=l), m.w_d(l=l, l_d=0), m.w_t(l=l), m.states_curr[l], m.precisions[l], m.states_curr[l+1]]
       if dynamical: # higher layer is a dynamical layer
             predictions = [p.detach().numpy() for p in [torch.zeros_like(TD_prediction_d), TD_prediction_d, TD_prediction_d]]
             return params, None, predictions, torch.zeros_like(e_d_), e_d_, e_t_
@@ -139,12 +138,12 @@ if __name__ == '__main__':
       obs = env.reset()
 
       """ Model setup"""
-      l_sizes, l_sizes_t = [IMAGE_SIZE,512, 512,512], []
+      l_sizes, l_sizes_t = [IMAGE_SIZE,32, 32,32, 32,32, 32,32], []
       for i, s in enumerate(l_sizes[::2]): l_sizes_t += [s,s]
 
       # output activation for each layer
-      activations_h = [torch.nn.Sigmoid()] + [torch.nn.Identity() for l in l_sizes[1::2]]
-      activations_d = [torch.nn.Identity()] + [torch.nn.Identity() for l in l_sizes[1::2]]
+      activations_h = [torch.nn.Sigmoid()] + [torch.nn.Sigmoid() for l in l_sizes[1::2]]
+      activations_d = [torch.nn.Sigmoid()] + [torch.nn.Sigmoid() for l in l_sizes[1::2]]
 
       # weights
       model_h = Model(sizes=l_sizes, bias=True, act=activations_h,
@@ -158,8 +157,8 @@ if __name__ == '__main__':
       # logging
       [err_h, err_d, err_t, preds_h, preds_d, preds_t], inputs = [[[] for _ in model_h.layers] for _ in range(6)], [[]]
 
-      UPDATES = 5
-      actions = [1 for i in range(100)]
+      UPDATES = 15
+      actions = [1 for i in range(10)]
 
       # iterate over time steps
       for i, action in enumerate(actions):
@@ -172,14 +171,14 @@ if __name__ == '__main__':
                   input = torch.nn.MaxPool2d((2,2), stride=(2,2))(input).reshape([BATCH_SIZE, -1, IMAGE_SIZE])
 
             # update model
-            for update in range(UPDATES):
+            for i in list(reversed(list(range(len(model_h.layers) - 1)))):
 
                   # 1) predict
                   # todo order of inputs, order of propagation, prediction needed?
-                  states_curr = predict(model_h.layers, inp_list=model_h.states_curr) # hierarchical prediction
+                  #states_curr = predict(model_h.layers, inp_list=model_h.states_curr) # hierarchical prediction
 
                   # 2) update
-                  for i in range(len(model_h.layers)-1):
+                  for update in range(UPDATES):
 
                         # input at lowest layer
                         model_h.states_curr[0] = torch.tensor(input.clone().detach().float().squeeze()).unsqueeze(1)
