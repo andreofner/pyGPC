@@ -35,8 +35,7 @@ class Model(torch.nn.Module):
 
       def parameters(self, l): # Relevant parameters to update a hierarchical layer
             return list(self.w_h(l=l).parameters()) + list(self.w_d(l=l, l_d=0).parameters())+\
-                   list(self.w_t(l=l).parameters()) + list(self.w_t(l=l+1).parameters())+\
-                   [self.currState[l], self.precisions[l], self.currState[l+1], self.lastState[l], self.lastState[l+1]]
+                   [self.currState[l], self.precisions[l], self.lastState[l], self.lastState[l+1]]
 
       def predict(self, target=None, states=None):
             """ Backward pass through provided layers """
@@ -48,14 +47,11 @@ def GPC(m, l, loss=torch.abs, dynamical=False):
       """ Generalized Predictive Coding optimizer """
 
       # define learning rate for each variable
-      opt_list = [SGD([m.lastState[l]], lr=10), # states l_{t}
+      opt_list = [SGD([m.lastState[l]], lr=0), # states l_{t}
       SGD([m.currState[l]], lr=10), # states l_{t+dt_{l+1}}
-      SGD([m.lastState[l+1]], lr=10), # higher layer states l+1_{t}
-      SGD([m.currState[l+1]], lr=10), # states l+1_{t+dt_{l+1}}
+      SGD([m.lastState[l+1]], lr=0), # higher layer states l+1_{t}
       SGD(list(m.w_h(l=l).parameters()), lr=.001), # hierarchical weights l
-      SGD(list(m.w_d(l=l, l_d=0).parameters()), lr=.001), # dynamical weights l
-      SGD(list(m.w_t(l=l).parameters()), lr=.001), # dynamical weights l
-      SGD(list(m.w_t(l=l+1).parameters()), lr=.001),  # transition weights l+1]
+      SGD(list(m.w_d(l=l, l_d=0).parameters()), lr=10), # dynamical weights l
       SGD([m.precisions[l]], lr=.1)] # precision l
       SGD([p.detach().requires_grad_() for p in m.parameters(l)], lr=0).zero_grad() # reset all gradients
 
@@ -65,11 +61,11 @@ def GPC(m, l, loss=torch.abs, dynamical=False):
       e_total = torch.mean(e_t)
 
       if dynamical: # higher layer is dynamical
-            pred_h = m.w_d(l=l, l_d=0).forward((m.currState[l+1])) # dynamical prediction
+            pred_h = m.w_d(l=l, l_d=0).forward((m.lastState[l+1])) # dynamical prediction
             e_h = loss((m.currState[l]-m.lastState[l]) - pred_h) # dynamical PE (state change or grad)
             e_total += torch.mean(torch.matmul(m.precisions[l]**-1, torch.reshape(e_h, [BATCH_SIZE, -1, 1]) ))
       else: # higher layer is hierarchical
-            pred_h = m.w_h(l=l).forward((m.currState[l+1])) # hierarchical prediction
+            pred_h = m.w_h(l=l).forward((m.lastState[l+1])) # hierarchical prediction
             e_h = loss((m.lastState[l] - pred_h)) # hierarchical PE at t
             e_total += torch.mean(torch.matmul(m.precisions[l]**-1, torch.reshape(e_h, [BATCH_SIZE, -1, 1])))
 
@@ -81,7 +77,7 @@ UPDATES = 1 # model updates per input
 actions = [1 for i in range(10)] # actions in Moving MNIST
 BATCH_SIZE = 8 # batch of agents
 NOISE_SCALE = 0.0 # add gaussian noise to images
-IMAGE_SIZE = 16*16 # image size after preprocessing
+IMAGE_SIZE = 32*32 # image size after preprocessing
 
 if __name__ == '__main__':
 
@@ -90,7 +86,7 @@ if __name__ == '__main__':
       env.reset()
 
       # output activations
-      l_sizes, l_sizes_t = [IMAGE_SIZE,64, 64,32], []
+      l_sizes, l_sizes_t = [IMAGE_SIZE,256, 256,256], []
       for i, s in enumerate(l_sizes[::2]): l_sizes_t += [s,s]
 
       # output activations
@@ -115,7 +111,7 @@ if __name__ == '__main__':
 
             if True: # reduce size
                   input = input.reshape([BATCH_SIZE, -1, 64, 64])
-                  input = torch.nn.MaxPool2d((2,2), stride=(4,4))(input).reshape([BATCH_SIZE, -1, IMAGE_SIZE])
+                  input = torch.nn.MaxPool2d((2,2), stride=(2,2))(input).reshape([BATCH_SIZE, -1, IMAGE_SIZE])
 
             # update model
             for update in range(UPDATES):
