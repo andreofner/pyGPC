@@ -32,8 +32,11 @@ class Model(torch.nn.Module):
       def w_t(self, l): return self.w_d(l, 0) # Transition (lowest dynamical) weights
 
       def parameters(self, l): # Relevant parameters to update a hierarchical layer
-            return list(self.w_h(l=l).parameters()) + list(self.w_d(l=l, l_d=0).parameters())+\
-                   [self.currState[l], self.prec[l], self.lastState[l], self.currState[l+1]]
+            return [{'params': [self.lastState[l]], 'lr': 1}, # state l, t
+            {'params': [self.currState[l]], 'lr': 1}, # state l+1, t+dt
+            {'params': [self.currState[l+1]], 'lr': 1}, # state l+1, t
+            {'params': list(self.w_h(l=l).parameters()), 'lr': 1}, # hierarchical weights l
+            {'params': list(self.w_d(l=l,l_d=0).parameters()), 'lr': 10}]  # dynamical weights l
 
       def predict(self, target=None, states=None):
             """ Backward pass through provided layers """
@@ -44,25 +47,12 @@ class Model(torch.nn.Module):
 def GPC(m, l, loss=torch.square, dynamical=False):
       """ Generalized Predictive Coding optimizer """
 
-      # todo hidden versus cause precision
-      # todo predict generalized coordinates v, not only lowest v
-      # todo v predicts start and end, x predicts motion in between?
-      # todo LR for each variable separately
-      # todo focus on predictions from intermediate layers
-      # todo improve weights updates
-
-      # define learning rate for each variable
-      opt_list = [SGD([m.lastState[l]], lr=1), # states l_{t}
-      SGD([m.currState[l]], lr=1), # states l_{t+dt_{l+1}}
-      SGD([m.currState[l+1]], lr=1), # higher layer states l+1_{t}
-      SGD(list(m.w_h(l=l).parameters()), lr=.000001), # hierarchical weights l
-      SGD(list(m.w_d(l=l, l_d=0).parameters()), lr=1), # dynamical weights l
-      ] # precision l
-
-      SGD([p.detach().requires_grad_() for p in m.parameters(l)], lr=0).zero_grad() # reset all gradients
+      # layer optimizer
+      opt = SGD(m.parameters(l), lr=0., momentum=0.)
+      opt.zero_grad() # reset gradients
 
       # dynamical prediction (state transition)
-      pred_t = m.w_t(l=l).forward(m.lastState[l])  # predicted hidden state change
+      pred_t = m.w_d(l=l, l_d=0).forward(m.lastState[l])  # predicted hidden state change
       e_t = loss(pred_t - m.currState[l])
       e_total = torch.mean(e_t)
 
@@ -76,10 +66,10 @@ def GPC(m, l, loss=torch.square, dynamical=False):
             e_total += torch.mean(e_h)
 
       e_total.backward() # compute gradients
-      for i, opt in enumerate(opt_list): opt.step() # step variables
+      opt.step() # step variables
       return [p.detach().numpy() for p in [pred_h, pred_t]], e_h, e_t
 
-UPDATES = 3 # model updates per input
+UPDATES = 10 # model updates per input
 actions = [1 for i in range(100)] # actions in Moving MNIST
 BATCH_SIZE = 8 # batch of agents
 NOISE_SCALE = 0.0 # add gaussian noise to images
@@ -104,8 +94,8 @@ if __name__ == '__main__':
 
       # precision & state priors
       PCN.target = torch.tensor(torch.tensor([1 for i in range(l_sizes[-1])]).unsqueeze(0).repeat(BATCH_SIZE,1,1)*.1)
+      PCN.lastState = PCN.predict(target=PCN.target.float(), states=None) # prior for state t
       PCN.currState = PCN.predict(target=PCN.target.float(), states=None) # prior for state t+dt
-      PCN.lastState = PCN.currState # prior for state t
 
       # visualization
       [err_h, err_t, preds_h, preds_t], inputs = [[[] for _ in PCN.layers] for _ in range(4)], [[]]
