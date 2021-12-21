@@ -61,21 +61,21 @@ def GPC(m, l, loss=torch.abs, dynamical=False, model_h=None):
       last_state_high = m.states_last[l+1]
 
       # optimizers for state inference in current layer
-      opt_last_low = SGD([last_state], lr=0) # states l_{t}
-      opt_low = SGD([z_low], lr=0) # states l_{t+dt_{l+1}}
+      opt_last_low = SGD([last_state], lr=.1) # states l_{t}
+      opt_low = SGD([z_low], lr=.1) # states l_{t+dt_{l+1}}
 
       # optimizers for state inference in higher layer
       opt_last_high = SGD([last_state_high], lr=.1) # higher layer states l+1_{t}
       opt_high = SGD([z_high], lr=.1) # states l+1_{t+dt_{l+1}}
 
       # optimizers for weights
-      opt_weights_h = SGD(list(model_h.parameters()), lr=.01) # hierarchical weights l
-      opt_weights_d = SGD(list(model_d.parameters()), lr=.01) # dynamical weights l
-      opt_weights_t = SGD(list(model_t.parameters()), lr=.01)#1) # dynamical weights l
-      opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=.01)#1) # transition weights l+1
+      opt_weights_h = SGD(list(model_h.parameters()), lr=.000001) # hierarchical weights l
+      opt_weights_d = SGD(list(model_d.parameters()), lr=.000001) # dynamical weights l
+      opt_weights_t = SGD(list(model_t.parameters()), lr=.000001)#1) # dynamical weights l
+      opt_weights_t_high = SGD(list(model_t_high.parameters()), lr=.000001)#1) # transition weights l+1
 
       # optimizers for precision in current layer
-      opt_var_h = SGD([z_var], lr=0.1)  # precision l
+      opt_var_h = SGD([z_var], lr=.1)  # precision l
 
       # collect variables and optimizers
       p_list = list(model_h.parameters())+list(model_d.parameters())+\
@@ -98,24 +98,15 @@ def GPC(m, l, loss=torch.abs, dynamical=False, model_h=None):
             pred_change = model_t.forward(last_state)  # predicted change of hidden state
             e_t_ = loss(pred_change - z_low)  #  change todo precision weighting
             e_total = torch.mean(e_t_)  # todo precision weighting
-
             #z_low_transitioned = model_t.forward(last_state)  # transition lower state
 
-            if dynamical:
-                  """ Dynamical update: Higher layer is a dynamical layer. 
-                  Compute dynamical top-down prediction. """
-
+            if dynamical: # Higher layer is dynamical
                   # 2) dynamical top-down prediction of transition from t -> t+dt_{l}
                   TD_prediction_d = model_d.forward((z_high)) # dynamical prediction
                   e_d_ = loss(change - TD_prediction_d) # dynamical PE
                   e_d = torch.mean(torch.matmul(z_var**-1, torch.reshape(e_d_, [BATCH_SIZE, -1, 1]) )) # weighted PE
                   e_total += e_d
-            else:
-                  """ Hierarchical update: Higher layer is a hierarchical layer. 
-                  Compute higher layer transition & hierarchical top-down prediction. 
-                  HIGHER LAYER: state_{t} -> state_{t+dt_{l+1}}
-                  LOWER  LAYER: state_{t} -> skipped transitions -> state_{t+dt_{l+1}} """
-
+            else: # Higher layer is hierarchical
                   # 2) hierarchical top-down prediction
                   TD_prediction_h = model_h.forward((z_high))  # hierarchical prediction
                   e_h_ = loss((last_state - TD_prediction_h))  # hierarchical PE at t
@@ -148,17 +139,14 @@ if __name__ == '__main__':
       obs = env.reset()
 
       """ Model setup"""
-      l_sizes = [IMAGE_SIZE,256, 256,256]
-      hidden_sizes = [0, 0]
+      l_sizes, l_sizes_t = [IMAGE_SIZE,512, 512,512], []
+      for i, s in enumerate(l_sizes[::2]): l_sizes_t += [s,s]
 
-      # output activation for each PC layer
+      # output activation for each layer
       activations_h = [torch.nn.Sigmoid()] + [torch.nn.Identity() for l in l_sizes[1::2]]
-      activations_t = [torch.nn.Sigmoid()] + [torch.nn.Identity() for l in l_sizes[1::2]]
       activations_d = [torch.nn.Identity()] + [torch.nn.Identity() for l in l_sizes[1::2]]
 
       # weights
-      l_sizes_t = []
-      for i, s in enumerate(l_sizes[::2]): l_sizes_t += [s,s]
       model_h = Model(sizes=l_sizes, bias=True, act=activations_h,
                       sizes_d=l_sizes_t, bias_d=True, act_d=activations_d)
 
@@ -168,11 +156,10 @@ if __name__ == '__main__':
       model_h.states_last = model_h.states_curr # prior for state t
 
       # logging
-      err_h, err_d, err_t, preds_h, preds_d, preds_t = [[[] for _ in model_h.layers] for _ in range(6)]
-      inputs = [[]]
+      [err_h, err_d, err_t, preds_h, preds_d, preds_t], inputs = [[[] for _ in model_h.layers] for _ in range(6)], [[]]
 
-      UPDATES = 1
-      actions = [0 for i in range(10)]
+      UPDATES = 5
+      actions = [1 for i in range(100)]
 
       # iterate over time steps
       for i, action in enumerate(actions):
@@ -192,7 +179,7 @@ if __name__ == '__main__':
                   states_curr = predict(model_h.layers, inp_list=model_h.states_curr) # hierarchical prediction
 
                   # 2) update
-                  for i in range(len(hidden_sizes)-1):
+                  for i in range(len(model_h.layers)-1):
 
                         # input at lowest layer
                         model_h.states_curr[0] = torch.tensor(input.clone().detach().float().squeeze()).unsqueeze(1)
@@ -211,14 +198,14 @@ if __name__ == '__main__':
                               err_t[i].append(e_t[:1].detach())
 
             # memorize last state
-            for i in range(len(hidden_sizes)):
+            for i in range(len(model_h.layers)):
                   model_h.states_last[i] = model_h.states_curr[i]
 
       """ Plotting """
-      sequence_video(preds_t, title="transition_predictions", plt_title="Transition prediction")
-      sequence_video(preds_d, title="dynamical_predictions", plt_title="Dynamical prediction")
+      #sequence_video(preds_t, title="transition_predictions", plt_title="Transition prediction")
+      #sequence_video(preds_d, title="dynamical_predictions", plt_title="Dynamical prediction")
       sequence_video(preds_h, title="hierarchical_predictions", plt_title="Hierarchical prediction")
-      sequence_video(err_t, title="transition_errors", plt_title="Transition prediction error")
-      sequence_video(err_d, title="dynamical_errors", plt_title="Dynamical prediction error")
-      sequence_video(err_h, title="hierarchical_errors", plt_title="Hierarchical prediction error")
-      sequence_video(inputs, title="model_inputs", plt_title="Input")
+      #sequence_video(err_t, title="transition_errors", plt_title="Transition prediction error")
+      #sequence_video(err_d, title="dynamical_errors", plt_title="Dynamical prediction error")
+      #sequence_video(err_h, title="hierarchical_errors", plt_title="Hierarchical prediction error")
+      #sequence_video(inputs, title="model_inputs", plt_title="Input")
