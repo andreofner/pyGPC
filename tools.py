@@ -12,7 +12,7 @@ from tensorflow import keras
 import matplotlib.pyplot as plt
 from moviepy.editor import ImageSequenceClip
 from gym.envs.registration import register as gym_register
-from GPC import BATCH_SIZE, IMAGE_SIZE
+from GPC import B_SIZE, IMAGE_SIZE
 
 """ Plotting helpers"""
 
@@ -81,11 +81,11 @@ class MnistEnv(gym.Env):
                               self.agent_size = AGENT_SIZE   # size of area currently covered by the agent
                               self.pos_x = 32   # horizontal position of agent
                               self.pos_y = 32   # vertical position of agent
-                              self.sequence_state = random.randint(0,BATCH_SIZE-1)  # ID of currently observed sequence
+                              self.sequence_state = random.randint(0,B_SIZE-1)  # ID of currently observed sequence
                               self.time_state = 0   # position in current sequence
                               self.step_size_xy = AGENT_STEP_SIZE # how large steps within frames are
 
-                  self.number_of_agents = BATCH_SIZE
+                  self.number_of_agents = B_SIZE
                   self.data = load_moving_mnist()
                   self.shape = 64, 64
                   self.nr_sequences = 1000 # sequences in dataset
