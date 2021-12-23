@@ -32,7 +32,7 @@ class Model(torch.nn.Module):
             return [{'params': [self.lastState[l].requires_grad_()], 'lr': 0.01}, # state l, t
             {'params': [self.currState[l].requires_grad_()], 'lr': 0.01}, # state l+1, t+dt
             {'params': [self.currState[l+1].requires_grad_()], 'lr': 0.1}, # state l+1, t
-            {'params': list(self.w_h(l=l).parameters()), 'lr': 0.001}, # top-down weights l
+            {'params': list(self.w_h(l=l).parameters()), 'lr': 0.01}, # top-down weights l
             {'params': [self.prec[l].requires_grad_()], 'lr': 0.1}]  # precision ls
 
       def predict(self, target=None, states=None, prior=False):
@@ -67,9 +67,9 @@ def GPC(m, l, loss=torch.abs, dynamical=False):
       opt.step() # step variables
       return pred.detach().numpy(), error
 
-UPDATES = 20 # model updates per input
-ACTIONS = [1 for i in range(100)] # actions in Moving MNIST
-B_SIZE = 2 # batch of agents
+UPDATES = 100 # model updates per input
+ACTIONS = [1 for i in range(20)] # actions in Moving MNIST
+B_SIZE = 4 # batch of agents
 IMAGE_SIZE = 32*32 # image size after preprocessing
 LEARN_PRECISION = True
 
