@@ -16,7 +16,7 @@ from GPC import B_SIZE, IMAGE_SIZE
 
 """ Plotting helpers"""
 
-def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_video=True):
+def sequence_video(data, title, plt_title="", scale=255, plot=False, plot_video=True):
 
       try:
             predicts_plot = np.asarray([pred.squeeze() for pred in data[0]])
