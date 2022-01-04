@@ -12,7 +12,7 @@ from tensorflow import keras
 import matplotlib.pyplot as plt
 from moviepy.editor import ImageSequenceClip
 from gym.envs.registration import register as gym_register
-from GPC import B_SIZE, IMAGE_SIZE
+from GPC import B_SIZE, IMAGE_SIZE, IMG_NOISE
 
 """ Plotting helpers"""
 
@@ -67,11 +67,11 @@ def load_moving_mnist(nr_sequences=1000):
 
 class MnistEnv(gym.Env):
       """ See https://github.com/jbinas/gym-mnist  for static version"""
-      def __init__(self, num_digits=2, dataset="moving_mnist", max_steps=100, noise_scale=0.1, seed=1337):
+      def __init__(self, num_digits=2, dataset="moving_mnist", max_steps=100, noise_scale=IMG_NOISE, seed=1337):
             self.shape = 28, num_digits * 28
             self.num_sym = num_digits
             self.max_steps = max_steps
-            self.noise_scale = noise_scale # weighted gaussian noise on observation
+            self.noise_scale = IMG_NOISE # weighted gaussian noise on observation
             self.seed(seed=seed)
             self.dataset = dataset
             if self.dataset == "moving_mnist": # moving MNIST dataset
@@ -166,8 +166,6 @@ class MnistEnv(gym.Env):
       def observed_state_sequential(self):
             # create an image of the env for visualization
             img = self.data[self.moving_agents[0].sequence_state, self.moving_agents[0].time_state]
-            img = img.astype(np.float64) + self.noise_scale * np.random.rand(img.shape[0], img.shape[1], 1) * 255 - 127
-            img = np.clip(img, 0, 255).astype(int)
             img_RGB = np.repeat(img, 3, 2)
             raw_frame = img
 
@@ -176,6 +174,8 @@ class MnistEnv(gym.Env):
             for ca in self.moving_agents:
                   # get frame from sequence
                   img = self.data[ca.sequence_state, ca.time_state]
+                  img = img.astype(np.float64) + self.noise_scale * np.random.rand(img.shape[0], img.shape[1],1) * 255 - 127
+                  img = np.clip(img, 0, 255).astype(int)
                   agentobs = np.zeros_like(img)
                   state = [ca.time_state, ca.pos_x, ca.pos_y, ca.agent_size, ca.step_size_xy]
                   ca_obs.append([img, np.zeros_like(img_RGB), np.zeros_like(raw_frame), state, agentobs])
