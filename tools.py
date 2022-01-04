@@ -67,7 +67,7 @@ def load_moving_mnist(nr_sequences=1000):
 
 class MnistEnv(gym.Env):
       """ See https://github.com/jbinas/gym-mnist  for static version"""
-      def __init__(self, num_digits=2, dataset="moving_mnist", max_steps=100, noise_scale=0., seed=1337):
+      def __init__(self, num_digits=2, dataset="moving_mnist", max_steps=100, noise_scale=0.1, seed=1337):
             self.shape = 28, num_digits * 28
             self.num_sym = num_digits
             self.max_steps = max_steps
