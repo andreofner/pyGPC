@@ -65,7 +65,7 @@ class Model(torch.nn.Module):
                 for l_d in self.layers_d: l_d.freeze(params)  # freeze dynamical weights
 
 
-def GPC(m, l, dynamical=False, transition=False):
+def GPC(m, l, dynamical=False):
     """ Layer-wise Generalized Predictive Coding optimizer"""
     opt = SGD(m.parameters(l, dynamical))
     opt.zero_grad()  # reset gradients
@@ -73,8 +73,8 @@ def GPC(m, l, dynamical=False, transition=False):
     if dynamical:  # predict state change
         error = (m.currState[l].requires_grad_() - m.lastState[l].requires_grad_()).flatten(1) - pred.flatten(1)
     else:  # predict state + state change
-        if transition: pred = pred.flatten(1) + m.layers_d[l].layers[0].forward(m.layers_d[l].currState[1].requires_grad_()).flatten(1)  # predicted state + predicted state transition
-        error = m.currState[l].requires_grad_() - pred.reshape(m.currState[l].shape)# hierarchical-dynamical error
+        if TRANSITION: pred = pred + m.layers_d[l].layers[0].forward(m.layers_d[l].currState[1].requires_grad_())  # predicted state + predicted state transition
+        error = m.currState[l].requires_grad_() - pred.reshape(m.currState[l].shape) # hierarchical-dynamical error
     error = error.reshape([B_SIZE * error.shape[1], -1]).unsqueeze(-1)
     F = torch.mean(torch.abs(error) * torch.abs(torch.matmul(m.covar[l] ** -1, error)), dim=[1, 2])
     F.backward(gradient=torch.ones_like(F))  # loss per batch element (not scalar)
@@ -84,7 +84,8 @@ def GPC(m, l, dynamical=False, transition=False):
 
 UPDATES, B_SIZE, IMAGE_SIZE = 200, 4, 16 * 16  # model updates, batch size, input size
 ACTIONS = [1 for i in range(1)]  # actions in Moving MNIST
-DYNAMICAL = False  # higher order derivatives (generalized coordinates)
+TRANSITION = False # first order transition model
+DYNAMICAL = False  # higher order transition derivatives (generalized coordinates)
 IMG_NOISE = 0.5  # gaussian noise on inputs todo scaling
 
 if __name__ == '__main__':
@@ -98,7 +99,7 @@ if __name__ == '__main__':
     models (generalized coordinates) switched off. Activating the dynamical model improves temporal prediction. 
     """
 
-    for weights_lr in [0, 0.01]:  # inference, learning+inference
+    for weights_lr in [0, 0.01]:  # pure inference, learning and inference
         for env_id, env_name in enumerate(['Mnist-Train-v0', 'Mnist-Test-v0']): # train set, test set
             env = gym.make(env_name)  # Moving MNIST gym environment
             env.reset()
