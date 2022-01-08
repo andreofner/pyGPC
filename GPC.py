@@ -29,7 +29,6 @@ class Model(torch.nn.Module):
         if not dynamical:
             self.covar = [torch.eye(cs.shape[-1] ** 2).repeat([B_SIZE * cs.shape[1], 1, 1]) * (var - covar) + covar for cs in self.currState]
 
-
     def initialise_states(self, dynamical=False):
         """ Create state priors for hierarchical and dynamical layers"""
         if dynamical:
@@ -68,10 +67,17 @@ class Model(torch.nn.Module):
 
 def GPC(m, l, dynamical=False):
     """ Layer-wise Generalized Predictive Coding optimizer"""
-    sr = m.sr[l] # todo infer with planning (EFE)
-    opt = SGD(m.parameters(l, dynamical))
+
+    if dynamical: # assign sampling rates to dynamical states (= hidden states, i.e. not seen by hierarchical predictions)
+        m.currState[l+1] = torch.cat([m.currState[l+1][:,:,:-1].detach(), torch.tensor([m.sr[l]]).repeat([B_SIZE,1,1])], dim=-1)
+    else: # all dynamical states of a hierarchical layer contain the same known sampling rate
+        for l_d in range(len(m.layers_d[l].currState)):
+            m.layers_d[l].currState[l_d] = torch.cat([m.layers_d[l].currState[l_d][:,:,:-1].detach(), torch.tensor([m.sr[l]]).repeat([B_SIZE,1,1])], dim=-1)
+
+
+    opt = SGD(m.parameters(l, dynamical)) # create this layer's SGD optimizer
     opt.zero_grad()  # reset gradients
-    pred = m.layers[l].forward(m.currState[l + 1].requires_grad_())  # prediction from higher layer
+    pred = m.layers[l].forward(m.currState[l+1].requires_grad_())  # prediction from higher layer
     if dynamical:  # predict state change
         error = (m.currState[l].detach() - m.lastState[l].requires_grad_()).flatten(1) - pred.flatten(1)
     else:  # predict state + state change
@@ -80,7 +86,7 @@ def GPC(m, l, dynamical=False):
     error = error.reshape([B_SIZE * error.shape[1], -1]).unsqueeze(-1)
     F = torch.mean(torch.abs(error) * torch.abs(torch.matmul(m.covar[l] ** -1, error)), dim=[1, 2])
     F.backward(gradient=torch.ones_like(F))  # loss per batch element (not scalar)
-    opt.step()
+    opt.step() # update all variables of this layer in parallel
     return pred.detach().numpy(), error
 
 
@@ -91,26 +97,17 @@ DYNAMICAL = True  # higher order transition derivatives (generalized coordinates
 IMG_NOISE = 0.5  # gaussian noise on inputs todo scaling
 
 if __name__ == '__main__':
-    """
-    Task:           Passive visual perception of moving MNIST
-    Model:          Convolutional hierarchical connectivity, dense dynamical connectivity
-    Learning Types: 1) Pure inference (no weights optimization during training)
-                    2) Combined inference & learning
-    Evaluation:     Digit reconstruction from first and last layer (deepest causal state)
-    The default configuration tested here is a static predictive coding model, first and higher order transition
-    models (generalized coordinates) switched off. Activating the dynamical model improves temporal prediction. 
-    """
 
     for weights_lr in [0]:  # pure inference, learning and inference
         for env_id, env_name in enumerate(['Mnist-Train-v0', 'Mnist-Test-v0']): # train set, test set
             env = gym.make(env_name)  # Moving MNIST gym environment
             env.reset()
-            PCN = Model([16, 8, 8, 4], Tanh(), Tanh(), lr_w=weights_lr, sr=[2,2,2])  # create model
+            PCN = Model([16, 8, 8, 4], Tanh(), Tanh(), lr_w=weights_lr, sr=[2.,2.,2.])  # create model
             [err_h, err_t, preds_h, preds_t, preds_g], inputs = [[[] for _ in PCN.layers] for _ in range(5)], [[]]  # visualization
 
             # train model
             for i, action in enumerate(ACTIONS):
-                for i in range(PCN.sr[0]): # sample data observations
+                for i in range(int(PCN.sr[0])): # sample data observations
                     obs, rew, done, _ = env.step([action for b in range(B_SIZE)])  # step environment
                 input = ((torch.Tensor(obs['agent_image'])).reshape([B_SIZE, -1, 64 ** 2]) / 255 + 0.1) * 0.8  # get observation
                 input = torch.nn.MaxPool2d(2, stride=4)(input.reshape([B_SIZE, -1, 64, 64])).reshape([B_SIZE, -1, IMAGE_SIZE])  # optionally reduce input size
@@ -136,4 +133,4 @@ if __name__ == '__main__':
 
             for s, t in zip([preds_h, inputs, preds_g, err_h][:3], ['p_h', 'p_g', 'ins', 'e_h'][:2]):  # generate videos
                 sequence_video(s, t, scale=255, env_name=str(env_name) + str(weights_lr))
-            env.close()  # close environment
+            env.close()
