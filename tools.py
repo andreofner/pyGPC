@@ -12,11 +12,11 @@ from tensorflow import keras
 import matplotlib.pyplot as plt
 from moviepy.editor import ImageSequenceClip
 from gym.envs.registration import register as gym_register
-from GPC import B_SIZE, IMAGE_SIZE, IMG_NOISE
+from GPC import B_SIZE, IMAGE_SIZE
 
 """ Plotting helpers"""
 
-def sequence_video(data, title, plt_title="", scale=255, plot=False, plot_video=True):
+def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_video=True, env_name=""):
 
       try:
             predicts_plot = np.asarray([pred.squeeze() for pred in data[0]])
@@ -27,7 +27,7 @@ def sequence_video(data, title, plt_title="", scale=255, plot=False, plot_video=
 
       if plot_video: # save episode as gif
             clip = ImageSequenceClip(list(predicts_plot*scale), fps=20)
-            clip.write_gif(str(PLOT_PATH) + str(title) + '.gif', fps=20, verbose=False)
+            clip.write_gif(str(PLOT_PATH) + str(title) + str(env_name) +'.gif', fps=20, verbose=False)
 
       if plot: # plot last frame
             plt.imshow(predicts_plot[-1])
@@ -56,22 +56,27 @@ try:
 except:
       pass
 
-def load_moving_mnist(nr_sequences=1000):
+def load_moving_mnist(nr_sequences=1000, test=False):
       """ Loads moving MNIST and saves to disk"""
       fpath = keras.utils.get_file("moving_mnist.npy","http://www.cs.toronto.edu/~nitish/unsupervised_video/mnist_test_seq.npy")
       dataset = np.load(fpath)
-      dataset = np.swapaxes(dataset, 0, 1) # Swap the axes representing the number of frames and number of data samples.
-      dataset = dataset[:nr_sequences, ...] # We'll pick out 1000 of the 10000 total examples and use those.
-      dataset = np.expand_dims(dataset, axis=-1) # Add a channel dimension since the images are grayscale.
+      if not test:
+            dataset = np.swapaxes(dataset, 0, 1) # Swap the axes representing the number of frames and number of data samples.
+            dataset = dataset[:nr_sequences, ...] # select train data todo improve dataset split
+            dataset = np.expand_dims(dataset, axis=-1) # Add a channel dimension since the images are grayscale.
+      else:
+            dataset = np.swapaxes(dataset, 0, 1) # Swap the axes representing the number of frames and number of data samples.
+            dataset = dataset[nr_sequences:2*nr_sequences, ...] # select test data todo improve dataset split
+            dataset = np.expand_dims(dataset, axis=-1) # Add a channel dimension since the images are grayscale.
       return dataset
 
 class MnistEnv(gym.Env):
       """ See https://github.com/jbinas/gym-mnist  for static version"""
-      def __init__(self, num_digits=2, dataset="moving_mnist", max_steps=100, noise_scale=IMG_NOISE, seed=1337):
+      def __init__(self, num_digits=2, dataset="moving_mnist", max_steps=100, noise_scale=0., seed=1337, test=False):
             self.shape = 28, num_digits * 28
             self.num_sym = num_digits
             self.max_steps = max_steps
-            self.noise_scale = IMG_NOISE # weighted gaussian noise on observation
+            self.noise_scale = noise_scale # weighted gaussian noise on observation
             self.seed(seed=seed)
             self.dataset = dataset
             if self.dataset == "moving_mnist": # moving MNIST dataset
@@ -86,7 +91,7 @@ class MnistEnv(gym.Env):
                               self.step_size_xy = AGENT_STEP_SIZE # how large steps within frames are
 
                   self.number_of_agents = B_SIZE
-                  self.data = load_moving_mnist()
+                  self.data = load_moving_mnist(test=test)
                   self.shape = 64, 64
                   self.nr_sequences = 1000 # sequences in dataset
                   self.moving_agents = [MovingAgent() for _ in range(self.number_of_agents)]
@@ -166,6 +171,8 @@ class MnistEnv(gym.Env):
       def observed_state_sequential(self):
             # create an image of the env for visualization
             img = self.data[self.moving_agents[0].sequence_state, self.moving_agents[0].time_state]
+            img = img.astype(np.float64) + self.noise_scale * np.random.rand(img.shape[0], img.shape[1], 1) * 255 - 127
+            img = np.clip(img, 0, 255).astype(int)
             img_RGB = np.repeat(img, 3, 2)
             raw_frame = img
 
@@ -174,8 +181,6 @@ class MnistEnv(gym.Env):
             for ca in self.moving_agents:
                   # get frame from sequence
                   img = self.data[ca.sequence_state, ca.time_state]
-                  img = img.astype(np.float64) + self.noise_scale * np.random.rand(img.shape[0], img.shape[1],1) * 255 - 127
-                  img = np.clip(img, 0, 255).astype(int)
                   agentobs = np.zeros_like(img)
                   state = [ca.time_state, ca.pos_x, ca.pos_y, ca.agent_size, ca.step_size_xy]
                   ca_obs.append([img, np.zeros_like(img_RGB), np.zeros_like(raw_frame), state, agentobs])
@@ -215,10 +220,15 @@ class MnistEnv(gym.Env):
 
 
 class MnistEnv1(MnistEnv):
-      """ Single moving digit """
       def __init__(self):
-            super().__init__(num_digits=1)
+            super().__init__(test=False)
+
+class MnistEnv2(MnistEnv):
+      def __init__(self):
+            super().__init__(test=True)
 
 
 """ Register as gym environment"""
-gym_register(id='Mnist-s1-v0', entry_point='tools:MnistEnv1',  reward_threshold=900)
+gym_register(id='Mnist-Train-v0', entry_point='tools:MnistEnv1',  reward_threshold=900)
+gym_register(id='Mnist-Test-v0', entry_point='tools:MnistEnv2',  reward_threshold=900)
+
