@@ -8,19 +8,19 @@ from tools import *
 from torch.optim import SGD
 from torch.nn import Sequential, Linear, Tanh, ConvTranspose2d
 
-
 class Model(torch.nn.Module):
     """ Hierarchical dynamical predictive coding model """
-    def __init__(self, sizes, act, act_d=None, dynamical=False, var=.1, covar=100000, dim=64, lr_w=0):
+    def __init__(self, sizes, act, act_d=None, dynamical=False, var=.1, covar=100000, dim=64, lr_w=0, sr=[]):
         super(Model, self).__init__()
         self.layers, self.layers_d, self.layers_p, self.covar, self.lr = [], [], [], [], []  # weights, dynamical weights, precision weights, covariance
         self.dynamical, self.sizes, self.dim = dynamical, sizes, dim  # layer type, state sizes, state channels
         self.covar = [torch.zeros(1) for _ in sizes]
+        self.sr = sr # sampling rate of each layer
         for i in range(0, len(sizes), 2):  # create hierarchical layers
             if not dynamical:
                 out_dim = 1 if i == 0 else dim  # single channel in output layer
                 self.layers.append(Sequential(ConvTranspose2d(dim, out_dim, 2, stride=2, bias=False), act))
-                self.layers_d.append(Model(sizes[i:], act_d, dynamical=True, dim=out_dim))  # dynamical weights
+                self.layers_d.append(Model(sizes[i:], act_d, dynamical=True, dim=out_dim, sr=[sr[i] for _ in sizes[i:]])) # dynamical weights
             else:
                 self.layers.append( Sequential(act, Linear((sizes[i + 1] ** 2) * self.dim, (sizes[i] ** 2) * self.dim, False)))
             self.lr.append([1, 1, 0, lr_w, 0.1])  # LR hidden layer
@@ -28,6 +28,7 @@ class Model(torch.nn.Module):
         self.initialise_states(dynamical=dynamical)
         if not dynamical:
             self.covar = [torch.eye(cs.shape[-1] ** 2).repeat([B_SIZE * cs.shape[1], 1, 1]) * (var - covar) + covar for cs in self.currState]
+
 
     def initialise_states(self, dynamical=False):
         """ Create state priors for hierarchical and dynamical layers"""
@@ -67,13 +68,14 @@ class Model(torch.nn.Module):
 
 def GPC(m, l, dynamical=False):
     """ Layer-wise Generalized Predictive Coding optimizer"""
+    sr = m.sr[l] # todo infer with planning (EFE)
     opt = SGD(m.parameters(l, dynamical))
     opt.zero_grad()  # reset gradients
     pred = m.layers[l].forward(m.currState[l + 1].requires_grad_())  # prediction from higher layer
     if dynamical:  # predict state change
-        error = (m.currState[l].requires_grad_() - m.lastState[l].requires_grad_()).flatten(1) - pred.flatten(1)
+        error = (m.currState[l].detach() - m.lastState[l].requires_grad_()).flatten(1) - pred.flatten(1)
     else:  # predict state + state change
-        if TRANSITION: pred = pred + m.layers_d[l].layers[0].forward(m.layers_d[l].currState[1].requires_grad_())  # predicted state + predicted state transition
+        if TRANSITION: pred = pred + m.layers_d[l].layers[0].forward(m.layers_d[l].currState[1].requires_grad_()).reshape(pred.shape)  # predicted state + predicted state transition
         error = m.currState[l].requires_grad_() - pred.reshape(m.currState[l].shape) # hierarchical-dynamical error
     error = error.reshape([B_SIZE * error.shape[1], -1]).unsqueeze(-1)
     F = torch.mean(torch.abs(error) * torch.abs(torch.matmul(m.covar[l] ** -1, error)), dim=[1, 2])
@@ -84,8 +86,8 @@ def GPC(m, l, dynamical=False):
 
 UPDATES, B_SIZE, IMAGE_SIZE = 200, 4, 16 * 16  # model updates, batch size, input size
 ACTIONS = [1 for i in range(1)]  # actions in Moving MNIST
-TRANSITION = False # first order transition model
-DYNAMICAL = False  # higher order transition derivatives (generalized coordinates)
+TRANSITION = True # first order transition model
+DYNAMICAL = True  # higher order transition derivatives (generalized coordinates)
 IMG_NOISE = 0.5  # gaussian noise on inputs todo scaling
 
 if __name__ == '__main__':
@@ -99,25 +101,23 @@ if __name__ == '__main__':
     models (generalized coordinates) switched off. Activating the dynamical model improves temporal prediction. 
     """
 
-    for weights_lr in [0, 0.01]:  # pure inference, learning and inference
+    for weights_lr in [0]:  # pure inference, learning and inference
         for env_id, env_name in enumerate(['Mnist-Train-v0', 'Mnist-Test-v0']): # train set, test set
             env = gym.make(env_name)  # Moving MNIST gym environment
             env.reset()
-
-            PCN = Model([16, 8, 8, 4], Tanh(), Tanh(), lr_w=weights_lr)  # create model
+            PCN = Model([16, 8, 8, 4], Tanh(), Tanh(), lr_w=weights_lr, sr=[2,2,2])  # create model
             [err_h, err_t, preds_h, preds_t, preds_g], inputs = [[[] for _ in PCN.layers] for _ in range(5)], [[]]  # visualization
 
             # train model
             for i, action in enumerate(ACTIONS):
-                for i in range(1): obs, rew, done, _ = env.step([action for b in range(B_SIZE)])  # step environment
+                for i in range(PCN.sr[0]): # sample data observations
+                    obs, rew, done, _ = env.step([action for b in range(B_SIZE)])  # step environment
                 input = ((torch.Tensor(obs['agent_image'])).reshape([B_SIZE, -1, 64 ** 2]) / 255 + 0.1) * 0.8  # get observation
                 input = torch.nn.MaxPool2d(2, stride=4)(input.reshape([B_SIZE, -1, 64, 64])).reshape([B_SIZE, -1, IMAGE_SIZE])  # optionally reduce input size
-
                 PCN.initialise_states()  # create prior states
                 PCN.currState[0] = torch.tensor(input.detach().float()).reshape([B_SIZE, 1, -1])  # feed data
 
                 for update in range(UPDATES):  # update model
-
                     for l_h in reversed(range(len(PCN.layers))):  # update each hierarchical layer
                         if env_id == 1: PCN.freeze([3])  # freeze weights for testing
                         p_h, e_h = GPC(PCN, l=l_h)  # step hierarchical variables
@@ -134,6 +134,6 @@ if __name__ == '__main__':
                                 if DYNAMICAL: preds_t[l_d].append(p_d[:1]), err_t[l_d].append(e_t[:1].detach())  # dynamical
                                 preds_g[l_h].append(PCN.predict(states=PCN.currState, layers=PCN.layers)[0][0])  # prediction from target state
 
-            for s, t in zip([preds_h, inputs, preds_g, err_h][:3], ['p_h', 'ins', 'p_g', 'e_h'][:3]):  # generate videos
+            for s, t in zip([preds_h, inputs, preds_g, err_h][:3], ['p_h', 'p_g', 'ins', 'e_h'][:2]):  # generate videos
                 sequence_video(s, t, scale=255, env_name=str(env_name) + str(weights_lr))
             env.close()  # close environment
