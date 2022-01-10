@@ -21,7 +21,7 @@ def plot_batch(batch, p=0, show=False, title=""):
     for i in range(4):
         for j in range(4):
             try:
-                  axs[i,j].imshow(batch[p].reshape([16,16,1]))
+                  axs[i,j].imshow(batch[p].reshape([16,16]))
             except:
                   pass
             p += 1
@@ -31,7 +31,7 @@ def plot_batch(batch, p=0, show=False, title=""):
     if show:
           plt.show()
     else:
-          plt.savefig(str(PLOT_PATH)+str(title)+".gif", dpi=50)
+          plt.savefig(str(PLOT_PATH)+str(title)+".pdf", dpi=150)
 
 def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_video=True, env_name=""):
 
