@@ -31,7 +31,7 @@ def plot_batch(batch, p=0, show=False, title=""):
     if show:
           plt.show()
     else:
-          plt.savefig(str(PLOT_PATH)+str(title)+".png", dpi=150)
+          plt.savefig(str(PLOT_PATH)+str(title)+".png", dpi=40)
 
 def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_video=True, env_name=""):
 
