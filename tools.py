@@ -16,6 +16,23 @@ from GPC import B_SIZE, IMAGE_SIZE
 
 """ Plotting helpers"""
 
+def plot_batch(batch, p=0, show=False, title=""):
+    fig, axs = plt.subplots(4,4)
+    for i in range(4):
+        for j in range(4):
+            try:
+                  axs[i,j].imshow(batch[p].reshape([16,16,1]))
+            except:
+                  pass
+            p += 1
+            axs[i, j].set_xticks([])
+            axs[i, j].set_yticks([])
+    plt.tight_layout()
+    if show:
+          plt.show()
+    else:
+          plt.savefig(str(PLOT_PATH)+str(title)+".pdf", dpi=150)
+
 def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_video=True, env_name=""):
 
       try:
@@ -82,11 +99,11 @@ class MnistEnv(gym.Env):
             if self.dataset == "moving_mnist": # moving MNIST dataset
                   class MovingAgent:
                         """A single agent seeing a (partial) frame and moves across time (and space)"""
-                        def __init__(self):
+                        def __init__(self, dataset_size):
                               self.agent_size = AGENT_SIZE   # size of area currently covered by the agent
                               self.pos_x = 32   # horizontal position of agent
                               self.pos_y = 32   # vertical position of agent
-                              self.sequence_state = random.randint(0,B_SIZE-1)  # ID of currently observed sequence
+                              self.sequence_state = random.randint(0,dataset_size-1)  # ID of currently observed sequence
                               self.time_state = 0   # position in current sequence
                               self.step_size_xy = AGENT_STEP_SIZE # how large steps within frames are
 
@@ -94,7 +111,7 @@ class MnistEnv(gym.Env):
                   self.data = load_moving_mnist(test=test)
                   self.shape = 64, 64
                   self.nr_sequences = 1000 # sequences in dataset
-                  self.moving_agents = [MovingAgent() for _ in range(self.number_of_agents)]
+                  self.moving_agents = [MovingAgent(self.data.shape[0]) for _ in range(self.number_of_agents)]
             else:
                   print("Please select a valid dataset!")
                   sys.exit()
