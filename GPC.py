@@ -109,8 +109,8 @@ def GPC(m,l,dynamical=False):
     opt.step() # update all variables of this layer
     return pred.detach().numpy(),error
 
-UPDATES, SCALE, B_SIZE,IMAGE_SIZE = 100, 3, 4, 16*16  # model updates, relative layer updates, batch size, input size
-ACTIONS = [1 for i in range(10)]  # temporal actions in Moving MNIST (1 for next frame. see tools.py for spatial movement)
+UPDATES, SCALE, B_SIZE,IMAGE_SIZE = 20, 1, 16, 16*16  # model updates, relative layer updates, batch size, input size
+ACTIONS = [1 for i in range(20)]  # temporal actions in Moving MNIST (1 for next frame. see tools.py for spatial movement)
 TRANSITION = False # first order transition model
 DYNAMICAL = False  # higher order transition derivatives (generalized coordinates)
 PRECISION = False # use precision estimation
@@ -120,18 +120,18 @@ if __name__ == '__main__':
     for env_id,env_name in enumerate(['Mnist-Train-v0','Mnist-Test-v0']): # train set,test set
         env = gym.make(env_name)  # Moving MNIST gym environment
         env.reset()
-        ch, ch2, ch3 = 32, 64, 128
+        ch, ch2, ch3 = 32, 32, 64
         PCN = Model([1*16*16,ch*8*8,ch*8*8,ch2*4*4,ch2*4*4,ch3*2*2],# state sizes
                     Tanh(),Tanh(),# hierarchical & dynamical activation
-                    lr_w=np.asarray([1,1,1,1,1,1])*0.001,# weights lr
-                    lr_sl=np.asarray([0,1,1,1,1,1])*5, # lower state lr
+                    lr_w=np.asarray([1,1,1,1,1,1])*.01,# weights lr
+                    lr_sl=np.asarray([0,1,1,1,1,1])*1, # lower state lr
                     lr_sh=np.asarray([1,1,1,1,1,1])*10, # higher state lr
                     dim=[1,ch,ch,ch2,ch2,ch3],# state channels (use 1 for dense layers)
                     sr=[2,2,1,1,1,1]) # sampling interval
         [err_h,err_t,preds_h,preds_t,preds_g],inputs = [[[] for _ in PCN.layers] for _ in range(5)],[[]]  # visualization
         print("States:"),[print(str(s.shape)) for s in PCN.currState], print("Weights:"),print(PCN.layers)
 
-        for i,action in enumerate(ACTIONS):
+        for a_id, action in enumerate(ACTIONS):
             for i in range(int(PCN.sr[0])): # sample data observations
                 obs,rew,done,_ = env.step([action for b in range(B_SIZE)])  # step environment
             input = ((torch.Tensor(obs['agent_image'])).reshape([B_SIZE,-1,64 ** 2]) / 255 + 0.1) * 0.8  # get observation
@@ -154,7 +154,12 @@ if __name__ == '__main__':
                         if update == UPDATES - 1 and l_h == 0 and l_d == 1:  # visualization
                             for d,i in zip([inputs[0],preds_h[l_h],err_h[l_h]],[input[:1],p_h[:1],e_h[:1].detach()]): d.append(i)  # hierarchical
                             if DYNAMICAL: preds_t[l_d].append(p_d[:1]),err_t[l_d].append(e_t[:1].detach())  # dynamical
-                            preds_g[l_h].append(PCN.predict_mixed(target=PCN.currState[-1])[0][0]) # prediction from target state
+                            p_g = PCN.predict_mixed(target=PCN.currState[-1])[0]
+                            preds_g[l_h].append(p_g[0]) # prediction from target state
+                            if a_id == len(ACTIONS)-1: # visualize batch
+                                plot_batch(input, title=str(env_name)+"input")
+                                plot_batch(p_h, title=str(env_name)+"pred_h")
+                                plot_batch(p_g, title=str(env_name)+"pred_g")
 
         for s,t in zip([preds_h,inputs,preds_g,err_h][:3],['p_h','ins','p_g','e_h'][:3]):  # generate videos
             sequence_video(s,t,scale=255,env_name=str(env_name))
