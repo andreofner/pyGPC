@@ -6,7 +6,7 @@ André Ofner 2021
 import torch
 from tools import *
 from torch.optim import SGD
-from torch.nn import Sequential,Linear,Tanh,ConvTranspose2d
+from torch.nn import Sequential, Linear, Tanh, ConvTranspose2d
 
 class Model(torch.nn.Module):
     """ Hierarchical dynamical predictive coding model """
@@ -109,8 +109,8 @@ def GPC(m,l,dynamical=False):
     opt.step() # update all variables of this layer
     return pred.detach().numpy(),error
 
-UPDATES, SCALE, B_SIZE,IMAGE_SIZE = 20, 1, 16, 16*16  # model updates, relative layer updates, batch size, input size
-ACTIONS = [1 for i in range(20)]  # temporal actions in Moving MNIST (1 for next frame. see tools.py for spatial movement)
+UPDATES, SCALE, B_SIZE,IMAGE_SIZE = 100, 3, 16, 16*16  # model updates, relative layer updates, batch size, input size
+ACTIONS = [1 for i in range(20)]  # actions in Moving MNIST (1 for next frame. see tools.py for spatial movement)
 TRANSITION = False # first order transition model
 DYNAMICAL = False  # higher order transition derivatives (generalized coordinates)
 PRECISION = False # use precision estimation
@@ -120,10 +120,10 @@ if __name__ == '__main__':
     for env_id,env_name in enumerate(['Mnist-Train-v0','Mnist-Test-v0']): # train set,test set
         env = gym.make(env_name)  # Moving MNIST gym environment
         env.reset()
-        ch, ch2, ch3 = 32, 32, 64
+        ch, ch2, ch3 = 32, 64, 128
         PCN = Model([1*16*16,ch*8*8,ch*8*8,ch2*4*4,ch2*4*4,ch3*2*2],# state sizes
                     Tanh(),Tanh(),# hierarchical & dynamical activation
-                    lr_w=np.asarray([1,1,1,1,1,1])*.01,# weights lr
+                    lr_w=np.asarray([1,1,1,1,1,1])*.001,# weights lr
                     lr_sl=np.asarray([0,1,1,1,1,1])*1, # lower state lr
                     lr_sh=np.asarray([1,1,1,1,1,1])*10, # higher state lr
                     dim=[1,ch,ch,ch2,ch2,ch3],# state channels (use 1 for dense layers)
@@ -131,7 +131,7 @@ if __name__ == '__main__':
         [err_h,err_t,preds_h,preds_t,preds_g],inputs = [[[] for _ in PCN.layers] for _ in range(5)],[[]]  # visualization
         print("States:"),[print(str(s.shape)) for s in PCN.currState], print("Weights:"),print(PCN.layers)
 
-        for a_id, action in enumerate(ACTIONS):
+        for a_id, action in enumerate(ACTIONS): # passive perception task, i.e. model has no control
             for i in range(int(PCN.sr[0])): # sample data observations
                 obs,rew,done,_ = env.step([action for b in range(B_SIZE)])  # step environment
             input = ((torch.Tensor(obs['agent_image'])).reshape([B_SIZE,-1,64 ** 2]) / 255 + 0.1) * 0.8  # get observation
