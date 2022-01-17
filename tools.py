@@ -15,10 +15,50 @@ from gym.envs.registration import register as gym_register
 from GPC import B_SIZE, IMAGE_SIZE
 
 """ Plotting helpers"""
+def print_layer_variances(PCN, l=0, title="Prior"):
+      print(str(title)+" Variance (batch mean): ", np.diag(np.array(PCN.covar[l].mean(dim=0).detach())).mean())
+      print(str(title)+" Precision (batch mean): ", (np.diag(np.array(PCN.covar[l].mean(dim=0).detach())).mean() ** -1).round(3))
+      print(str(title)+" Co-precision (batch mean): ", (np.array(PCN.covar[l].mean(dim=0).detach()).mean() ** -1).round(3))
+
+def plot_variance_updates(variances, errors=None, title=""):
+      plt.plot(variances, label="Variance (batch mean)", color="blue")
+      if errors is not None:plt.plot(errors, label="Prediction error (batch mean)", color="red")
+      plt.title(str(title)+"\nLayer 1")
+      plt.ylabel("Magnitude (batch mean)")
+      plt.xlabel("Update")
+      plt.legend()
+      plt.grid()
+      plt.show()
+
+def model_sizes_summary(PCN):
+      print("\nHierarchical weights: "), [print("Layer " + str(l) + ": " + str(list(s))) for l, s in
+                                          enumerate(PCN.layers)];
+      print("\nHierarchical states: "), [print("Layer " + str(l) + ": " + str(list(s.shape))) for l, s in
+                                         enumerate(PCN.currState)];
+      print("\nHierarchical covariances: "), [print("Layer " + str(l) + ": " + str(list(s.shape))) for l, s in
+                                              enumerate(PCN.covar)];
+
+def generate_videos(preds_h, inputs, preds_g, err_h, env_name, nr_videos=3, scale=1):
+      for s, t in zip([preds_h, inputs, preds_g, err_h][:nr_videos], ['p_h', 'ins', 'p_g', 'e_h'][:nr_videos]):
+            sequence_video(s, t, scale=scale, env_name=str(env_name))
+
+def visualize_covariance_matrix(PCN, skip_l=2, title=""):
+      for covar, covar_type in zip([PCN.covar], [""]):
+            fig, axs = plt.subplots(len(PCN.layers[::skip_l]), figsize=(5, 10))
+            for i, ax in enumerate(axs):
+                  l = ax.imshow(covar[i].detach().squeeze() ** -1)
+                  ax.set_xticks([]);
+                  ax.set_yticks([])
+                  ax.set_xlabel("Layer " + str(i * skip_l + 1))
+                  plt.colorbar(l, ax=ax)
+            plt.suptitle(str(title)+"\nEstimated precision: " + str(covar_type))
+            plt.tight_layout()
+            plt.show()
+            plt.close()
 
 def plot_batch(batch, p=0, show=False, title=""):
-    fig, axs = plt.subplots(4,4)
-    for i in range(4):
+      fig, axs = plt.subplots(4,4)
+      for i in range(4):
         for j in range(4):
             try:
                   axs[i,j].imshow(batch[p].reshape([16,16]))
@@ -27,11 +67,12 @@ def plot_batch(batch, p=0, show=False, title=""):
             p += 1
             axs[i, j].set_xticks([])
             axs[i, j].set_yticks([])
-    plt.tight_layout()
-    if show:
+      plt.tight_layout()
+      if show:
           plt.show()
-    else:
+      else:
           plt.savefig(str(PLOT_PATH)+str(title)+".png", dpi=40)
+      plt.close()
 
 def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_video=True, env_name=""):
 
@@ -248,4 +289,3 @@ class MnistEnv2(MnistEnv):
 """ Register as gym environment"""
 gym_register(id='Mnist-Train-v0', entry_point='tools:MnistEnv1',  reward_threshold=900)
 gym_register(id='Mnist-Test-v0', entry_point='tools:MnistEnv2',  reward_threshold=900)
-
