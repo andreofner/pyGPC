@@ -30,6 +30,25 @@ def plot_variance_updates(variances, errors=None, title=""):
       plt.grid()
       plt.show()
 
+def plot_thumbnails(variances, errors=None, inputs=None, datapoints=[], img_s=2, threshold = 0.2):
+  inputs = np.asarray([p.detach().numpy() for p in inputs[0]]).squeeze()
+  fig, ax = plt.subplots(1, 1, figsize=(10,5))
+  plt.plot(variances, label="Inferred Variance", color="blue")
+  for i in range(len(datapoints[:-1])):
+      ax.vlines(datapoints[i], -5, 10, lw=1, color="grey", ls='dashed', alpha=0.5)
+      if np.abs(errors[datapoints[i]]) > threshold:
+          ax.imshow(inputs[i], extent=[datapoints[i]-(img_s//2), datapoints[i]+(img_s//2), -2*img_s, -img_s], aspect=1)
+          ax.vlines(datapoints[i], errors[datapoints[i]], -img_s, lw=1, color="black")
+  ax.plot(errors, label="Prediction error", color="red")
+  ax.set_title("Prediction error precision (batch mean): Layer 1")
+  ax.set_ylabel("Magnitude (batch mean)")
+  ax.set_xlabel("Update")
+  ax.set_ylim(-5,10)
+  ax.legend(loc='upper right')
+  plt.yticks([t for t in plt.yticks()[0] if t >= 0])
+  plt.grid(axis='y')
+  plt.show()
+
 def model_sizes_summary(PCN):
       print("\nHierarchical weights: "), [print("Layer " + str(l) + ": " + str(list(s))) for l, s in
                                           enumerate(PCN.layers)];
@@ -39,6 +58,8 @@ def model_sizes_summary(PCN):
                                               enumerate(PCN.covar)];
 
 def generate_videos(preds_h, inputs, preds_g, err_h, env_name, nr_videos=3, scale=1):
+      preds_h = [[p.clip(min=0) for p in preds_h[0]]]
+      preds_g = [[p.clip(min=0) for p in preds_g[0]]]
       for s, t in zip([preds_h, inputs, preds_g, err_h][:nr_videos], ['p_h', 'ins', 'p_g', 'e_h'][:nr_videos]):
             sequence_video(s, t, scale=scale, env_name=str(env_name))
 
