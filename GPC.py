@@ -2,6 +2,7 @@
 Differentiable Generalized Predictive Coding
 André Ofner 2021
 """
+import matplotlib.pyplot as plt
 import torch
 from tools import *
 from torch.optim import SGD
@@ -10,8 +11,7 @@ from torch.nn import Sequential, Linear, ELU, Identity, ConvTranspose2d
 class Model(torch.nn.Module):
     """ Hierarchical dynamical predictive coding model """
 
-    def __init__(self, sizes, act, act_d=None, dynamical=False, var=1, covar=1000000, dim=[], sr=[], lr_w=None,
-                 lr_sl=None, lr_sh=None, lr_g=None):
+    def __init__(self, sizes, act, act_d=None, dynamical=False, dim=[], sr=[], lr_w=None, lr_sl=None, lr_sh=None, lr_g=None):
         super(Model, self).__init__()
 
         # model variables
@@ -42,7 +42,7 @@ class Model(torch.nn.Module):
                 self.layers_d.append(Model(sizes[i:], act_d, dynamical=True, dim=dim[i:], sr=[sr[i] for _ in sizes[i:]]))  # dynamical weights
             else:
                 self.layers.append(Sequential(act, Linear((sizes[i + 1]), (sizes[i]), False)))  # dense dynamical layers
-            self.lr.append([lr_sh[i], lr_sl[i], 0, lr_w[i], .1, lr_g[i]])  # learning rate per layer
+            self.lr.append([lr_sh[i], lr_sl[i], 0, lr_w[i], 1, lr_g[i]])  # learning rate per layer
 
         # initialise states, state gain and precision (inverse variance)
         [self.currState, self.lastState] = [self.init_states(mixed=(self.n_cnn > 0)) for _ in range(2)]
@@ -151,12 +151,12 @@ def GPC(m, l, dynamical=False, infer_precision=False):
     return pred.detach().numpy(), error
 
 UPDATES, SCALE, B_SIZE, IMAGE_SIZE = 50, 0, 1, 16*16  # model updates, relative layer updates, batch size, input size
-ACTIONS = [1 for i in range(19)]  # actions in Moving MNIST (1 for next frame. see tools.py for spatial movement)
-TRANSITION, DYNAMICAL = False, False  # first order transition model, higher order derivatives (generalized coordinates)
+ACTIONS = [1 for i in range(20)]  # actions in Moving MNIST (1 for next frame. see tools.py for spatial movement)
+TRANSITION, DYNAMICAL = True, False  # first order transition model, higher order derivatives (generalized coordinates)
 PRECISION = True  # use precision estimation
 IMG_NOISE = 0.0  # gaussian noise on inputs
 BATCH_SIZE_PRECISION = 1 # either 1 or B_SIZE (batch mean / learning or per batch element / inference)
-CONVERGENCE_TRESHOLD = .01 # criterion to stop optimizing a datapoint
+CONVERGENCE_TRESHOLD = .1 # criterion to stop optimizing a datapoint
 
 if __name__ == '__main__':
     for env_id, env_name in enumerate(['Mnist-Train-v0']):  #  'Mnist-Test-v0'
@@ -165,22 +165,20 @@ if __name__ == '__main__':
         env = gym.make(env_name); env.reset()
 
         # create model
-        ch, ch2, ch3 = 8, 8, 8  # CNN channels
-        PCN = Model([1 * 16 * 16, ch*8*8, ch*8*8, ch2*4*4, ch2*4*4, ch3*2*2, ch3*2*2, ch3*1*1, ch3*1*1, 32, 32, 32],  # state sizes
+        ch, ch2, ch3 = 64, 64, 128  # CNN channels
+        PCN = Model([1 * 16 * 16, ch*8*8, ch*8*8, ch2*4*4, ch2*4*4, ch3*2*2, ch3*2*2, ch3*1*1, ch3*1*1, 64, 64, 4],  # state sizes
             ELU(), Identity(),  # hierarchical & dynamical activation
-            lr_w=np.asarray([0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]) * 0.0001,  # 1,  # weights lr
+            lr_w=np.asarray([0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]) * 0.000,  # 1,  # weights lr
             lr_sl=np.asarray([0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) * .1,  # lower state lr
             lr_sh=np.asarray([1, 1, 1, 1, 1, 1, 1, 1, .1, .1, .1, .1]) * .1,  # higher state lr
             lr_g=np.asarray([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) * 1,  # state gain lr
             dim=[1, ch, ch, ch2, ch2, ch3, ch3, ch3, 1, 1, 1, 1],  # state channels (use 1 for dense layers)
-            sr=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])  # sampling interval (skipped observations in lower layer)
-
-        # visualization
-        [err_h, err_t, preds_h, preds_t, preds_g], inputs = [[[] for _ in PCN.layers] for _ in range(5)], [[]]
-        precisions, raw_errors, variances_slow = [], [], None
+            sr=[2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])  # sampling interval (skipped observations in lower layer)
 
         for a_id, action in enumerate(ACTIONS):  # passive perception task (model has no control)
-            converged = False
+            if a_id % 20 == 0 and a_id < len(ACTIONS)-1: # how much history to log and visualize
+                [err_h, err_t, preds_h, preds_t, preds_g], inputs = [[[] for _ in PCN.layers] for _ in range(5)], [[]]
+                precisions, raw_errors, variances_slow, datapoints, total_updates = [], [], None, [], 0
 
             # get observation and preprocess
             for i in range(int(PCN.sr[0])):  # skip observations according to data layer's sample rate
@@ -189,7 +187,9 @@ if __name__ == '__main__':
             input = torch.nn.MaxPool2d(4, stride=4)(input.reshape([B_SIZE, -1, 64, 64]))  # reduce input size
             PCN.currState[0] = torch.tensor(input.detach().float()).reshape([B_SIZE, 1, -1])  # feed to model
 
+            converged = False
             for update in range(UPDATES):
+                total_updates += 1
 
                 # update hierarchical layers
                 layers_h = reversed(range(len(PCN.layers)))
@@ -227,6 +227,7 @@ if __name__ == '__main__':
 
                     # memorize last state mean and precision
                     if update == UPDATES - 1 or converged:
+                        datapoints.append(total_updates)
                         PCN.lastState[l_h] = PCN.currState[l_h].clone().detach()
                         if variances_slow is not None: PCN.covar = variances_slow
                         _, raw_error = GPC(PCN, l=l_h, infer_precision=True); # update precision once per datapoint
@@ -234,9 +235,11 @@ if __name__ == '__main__':
                 if converged: break
         env.close()
 
-        """ Visualization """
-        generate_videos(preds_h, inputs, preds_g, err_h, env_name, nr_videos=3, scale=25);
+        """ Print summaries """
         model_sizes_summary(PCN);
-        visualize_covariance_matrix(PCN, title=env_name);
-        plot_variance_updates(precisions, errors=raw_errors);
         print_layer_variances(PCN,0, title="Posterior");
+
+        """ Visualize """
+        generate_videos(preds_h, inputs, preds_g, err_h, env_name, nr_videos=3, scale=25);
+        plot_thumbnails(precisions, errors=raw_errors, inputs=inputs, datapoints=datapoints, threshold=0.2);
+        visualize_covariance_matrix(PCN, title=env_name, skip_l=1);
