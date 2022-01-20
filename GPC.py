@@ -2,7 +2,7 @@
 Differentiable Generalized Predictive Coding
 André Ofner 2021
 """
-import matplotlib.pyplot as plt
+
 import torch
 from tools import *
 from torch.optim import SGD
@@ -11,43 +11,63 @@ from torch.nn import Sequential, Linear, ELU, Identity, ConvTranspose2d
 class Model(torch.nn.Module):
     """ Hierarchical dynamical predictive coding model """
 
-    def __init__(self, sizes, act, act_d=None, dynamical=False, dim=[], sr=[], lr_w=None, lr_sl=None, lr_sh=None, lr_g=None):
+    def __init__(self, sizes, act, act_d=None, dynamical=False,
+                 dim=[], sr=[], lr_w=None, lr_sl=None, lr_sh=None, lr_g=None,
+                 gen_coord=1):
         super(Model, self).__init__()
 
-        # model variables
-        self.layers = []  # weights
+        self.layers = [] # hierarchical+dynamical weights
+        self.layers_c = []  # hierarchical weights
         self.layers_d = []  # dynamical weights
         self.lr = []  # learning rate per layer
         self.dynamical = dynamical  # model type
-        self.sizes = sizes  # state sizes
+        self.sizes = sizes  # hierarchical state sizes
         self.dim = np.asarray(dim)  # state channels
         self.sr = sr  # sampling rate per layer
-
-        # optionally use CNN layers
-        self.n_cnn = ((self.dim > 1).sum()) // 2 + 1  # number of CNN layers, if present
-        self.state_sizes = np.sqrt(self.sizes / self.dim).astype(int)[:self.n_cnn * 2]  # cnn state sizes, if present
+        self.gen_coord = gen_coord # number of higher order transition derivatives (generalised coordinates)
+        self.n_cnn = ((self.dim > 1).sum()) // 2 + 1  # number of CNN layers (optional)
+        self.state_sizes = np.sqrt(self.sizes / self.dim).astype(int)[:self.n_cnn * 2]  # for CNN layers (optional)
 
         # default learning rates
         if lr_w is None: lr_w = [0. for _ in self.sizes]  # weights
         if lr_sh is None: lr_sh = [1. for _ in self.sizes]  # state
         if lr_sl is None: lr_sl = [1. for _ in self.sizes]  # higher state
-        if lr_g is None: lr_g = [.1 for _ in self.sizes]  # state gain (multiplicative bias)
+        if lr_g is None: lr_g = [.1 for _ in self.sizes]  # state gain
 
         # create layers
-        for i in range(0, len(sizes), 2):
+        for i in range(0, len(self.sizes ), 2):
             if not dynamical:
-                net = ConvTranspose2d(dim[i + 1], dim[i], 2, stride=2, bias=False) if dim[i + 1] > 1 else Linear(
-                    sizes[i + 1], sizes[i], False)
-                self.layers.append(Sequential(act, net, torch.nn.Dropout(0.0)))  # CNN or dense hierarchical weights
-                self.layers_d.append(Model(sizes[i:], act_d, dynamical=True, dim=dim[i:], sr=[sr[i] for _ in sizes[i:]]))  # dynamical weights
+                net_h = ConvTranspose2d(dim[i + 1], dim[i], 2, stride=2, bias=False) if dim[i + 1] > 1 else Linear(
+                    self.sizes[i+1], self.sizes[i], False)
+                net = ConvTranspose2d(dim[i + 1]*2, dim[i], 2, stride=2, bias=False) if dim[i + 1] > 1 else Linear(
+                    self.sizes[i+1]*2, self.sizes[i], False) # todo fix hidden size
+                # dense or convolutional hierarchical weights
+                self.layers.append(Sequential(act, net_h, torch.nn.Dropout(0.0)))
+                self.layers_c.append(Sequential(act, net, torch.nn.Dropout(0.0)))
+                # dense dynamical weights # todo fix hidden size
+                if i == 0: # input layer has no hidden units
+                    self.layers_d.append(Model([self.sizes[i] for _ in range(gen_coord*2)], act_d, dynamical=True,
+                                               dim=[1 for _ in range(gen_coord * 2)],
+                                               sr=[sr[i] for _ in self.sizes[i:]]))
+                else:
+                    ratio = [self.sizes[i], self.sizes[i]*2] # todo fix hidden size
+                    self.layers_d.append(Model(ratio, act_d, dynamical=True,
+                                               dim=[1 for _ in range(gen_coord*2)], sr=[sr[i] for _ in self.sizes[i:]]))
             else:
-                self.layers.append(Sequential(act, Linear((sizes[i + 1]), (sizes[i]), False)))  # dense dynamical layers
-            self.lr.append([lr_sh[i], lr_sl[i], 0, lr_w[i], 1, lr_g[i]])  # learning rate per layer
+                self.layers.append(Sequential(act, Linear((self.sizes[i+1]), (self.sizes[i]), False)))  # dense dynamical layers
+            self.lr.append([lr_sh[i], lr_sl[i], 0, lr_w[i], .1, lr_g[i]])  # learning rate per layer
 
-        # initialise states, state gain and precision (inverse variance)
-        [self.currState, self.lastState] = [self.init_states(mixed=(self.n_cnn > 0)) for _ in range(2)]
-        [self.curr_gain, self.last_gain] = [self.init_states(mixed=(self.n_cnn > 0)) for _ in range(2)]
-        self.covar = [torch.zeros(1) for _ in self.layers + [None]]  # precision
+        # initialise states, state gain and precision
+        [self.curr_cause, self.last_cause] = [self.init_states(mixed=(self.n_cnn > 0)) for _ in range(2)] # states at time t & t-dt
+        [self.c_curr_gain, self.c_last_gain] = [self.init_states(mixed=(self.n_cnn > 0)) for _ in range(2)] # state gain at time t & t-dt
+        self.covar = [torch.zeros(1) for _ in self.layers + [None]]  # inverse precision
+
+        # initialise memory states, state gain
+        [self.curr_hidden, self.last_hidden] = [self.init_states(mixed=(self.n_cnn > 0)) for _ in range(2)]  # states at time t & t-dt
+        [self.h_curr_gain, self.h_last_gain] = [self.init_states(mixed=(self.n_cnn > 0)) for _ in range(2)]  # state gain at time t & t-dt
+        self.covar_hidden = [torch.zeros(1) for _ in self.layers + [None]]  # inverse precision
+
+        if not dynamical: self.layers = self.layers_c # keep only layers with full state as input
 
     def init_states(self, mixed=False):
         """ Create state priors for hierarchical and dynamical layers"""
@@ -57,7 +77,7 @@ class Model(torch.nn.Module):
             states_cnn = self.predict(
                 torch.ones([B_SIZE, self.dim[self.n_cnn * 2 - 1], self.state_sizes[-1], self.state_sizes[-1]]).float(),
                 prior=True, layers=self.layers[:self.n_cnn])
-            states_dense = self.predict(torch.ones([B_SIZE, 1, self.sizes[-1]]).float(), prior=True,layers=self.layers[self.n_cnn:])
+            states_dense = self.predict(torch.ones([B_SIZE, 1, self.sizes[-1]]).float(), prior=True, layers=self.layers[self.n_cnn:])
             return states_cnn + states_dense[1:]
         elif self.n_cnn > 1:  # CNN layers
             return self.predict(torch.ones([B_SIZE, self.dim[-1], self.sizes[-1], self.sizes[-1]]).float(), prior=True)
@@ -65,29 +85,60 @@ class Model(torch.nn.Module):
             return self.predict(torch.ones([B_SIZE, 1, self.sizes[-1]]).float(), prior=True)
 
     def params(self, l, deepest_layer=False, dynamical=False):
-        """ Parameters and learning rates per layer.
-        Regularization through top-down predictability affects learning and inference."""
+        """ Parameters and learning rates per layer. Top-down predictability regularizes learning and inference."""
+        # todo optimize last_gain
+        # todo optimize hidden states and gain
         l_h = l if deepest_layer else l + 1
-        params = [{'params': [self.layers[l][1].weight.requires_grad_()], 'lr': self.lr[l][3]},  # top-down weights (l): accuracy
-                  {'params': [self.currState[l + 1]], 'lr': self.lr[l][0]},  # higher state (l+1,t): accuracy
-                  {'params': [self.currState[l]], 'lr': self.lr[l][1]},  # lower state (l,t-dt): regularization
-                  {'params': [self.lastState[l]], 'lr': self.lr[l][2]},  # lower state (l,t): regularization
-                  {'params': [self.curr_gain[l]], 'lr': self.lr[l][5]},  # state gain (l): accuracy
-                  {'params': [self.curr_gain[l + 1]], 'lr': self.lr[l_h][5]}]  # state gain (l): accuracy
-        return params[:-1] if dynamical else params  # todo dynamical layers without covar
+        if not dynamical:
+            params = [{'params': [self.layers[l][1].weight.requires_grad_()], 'lr': self.lr[l][3]}, # top-down weights (l): accuracy
+
+                      {'params': [self.curr_cause[l + 1]], 'lr': self.lr[l][0]},  # higher state (l+1,t): accuracy
+                      {'params': [self.curr_hidden[l + 1]], 'lr': self.lr[l][0]},  # higher state (l+1,t): accuracy
+
+                      {'params': [self.curr_cause[l]], 'lr': self.lr[l][1]},  # lower state (l,t-dt): regularization
+                      {'params': [self.curr_hidden[l]], 'lr': self.lr[l][1]},  # lower hidden state (l,t-dt)
+
+                      {'params': [self.last_cause[l]], 'lr': self.lr[l][2]},  # lower state (l,t): regularization
+                      {'params': [self.last_hidden[l]], 'lr': self.lr[l][2]},  # lower hidden state (l,t)
+
+                      {'params': [self.c_curr_gain[l]], 'lr': self.lr[l][5]},  # state gain (l): accuracy
+                      {'params': [self.h_curr_gain[l]], 'lr': self.lr[l][5]},  # state gain (l): accuracy
+
+                      {'params': [self.c_curr_gain[l+1]], 'lr': self.lr[l_h][5]},  # state gain (l): accuracy
+                      {'params': [self.h_curr_gain[l+1]], 'lr': self.lr[l_h][5]}]  # state gain (l): accuracy
+            return params+self.layers_d[l].params(l=0, dynamical=True)
+        else:
+            params = [{'params': [self.layers[l][1].weight.requires_grad_()], 'lr': self.lr[l][3]}, # top-down weights (l): accuracy
+
+                      {'params': [self.curr_cause[l + 1]], 'lr': self.lr[l][0]},  # higher state (l+1,t): accuracy
+                      {'params': [self.curr_hidden[l + 1]], 'lr': self.lr[l][0]},  # higher state (l+1,t): accuracy
+
+                      {'params': [self.curr_cause[l]], 'lr': self.lr[l][1]},  # lower state (l,t-dt): regularization
+                      {'params': [self.curr_hidden[l]], 'lr': self.lr[l][1]},  # lower state (l,t-dt): regularization
+
+                      {'params': [self.last_cause[l]], 'lr': self.lr[l][2]},  # lower state (l,t): regularization
+                      {'params': [self.last_hidden[l]], 'lr': self.lr[l][2]},  # lower state (l,t): regularization
+
+                      {'params': [self.c_curr_gain[l]], 'lr': self.lr[l][5]},  # state gain (l): accuracy
+                      {'params': [self.h_curr_gain[l]], 'lr': self.lr[l][5]}]  # state gain (l): accuracy
+            return params
 
     def params_covar(self, l):
         """ Covariance parameters and learning rates per layer """
         params = [{'params': [self.covar[l]], 'lr': self.lr[l][4]}]  # covariance (l) - learning rate
-        return params  # todo dynamical layers without covar
+        return params
 
     def predict(self, target=None, states=None, prior=False, layers=None, state_gains=None):
         """ Backward prediction through all layers. Optionally initialises prior states"""
         states = [target] if states is None else [states[-1]]
-        if prior: [torch.nn.init.torch.nn.init.normal_(states[-1][b]) for b in range(B_SIZE)]
-        if layers is None: layers = self.layers
-        if state_gains is None and not prior: state_gains = self.curr_gain
-        if prior: state_gains = [None for _ in self.layers]
+        if prior:
+            [torch.nn.init.torch.nn.init.normal_(states[-1][b]) for b in range(B_SIZE)]
+        if layers is None:
+            layers = self.layers
+        if state_gains is None and not prior:
+            state_gains = self.c_curr_gain
+        elif prior:
+            state_gains = [None for _ in self.layers]
         for w, g in zip(list(reversed(layers)), list(reversed(state_gains))):
             if not prior:
                 states.append(w(states[-1] * g).detach())
@@ -97,24 +148,48 @@ class Model(torch.nn.Module):
         return list(reversed(states))
 
     def predict_mixed(self, target=None):
-        """ Backward pass through CNN, dense or mixed models """
+        """ Backward pass through models with dense, convolutional or mixed weights"""
         try:  # mixed model
-            preds_d = self.predict(target, layers=self.layers[self.n_cnn:], state_gains=self.curr_gain[self.n_cnn:])
+            preds_d = self.predict(target, layers=self.layers[self.n_cnn:],
+                                   state_gains=self.c_curr_gain[self.n_cnn:])
             pred_d = preds_d[0].reshape(
                 [B_SIZE, self.dim[self.n_cnn * 2 - 1], self.state_sizes[-1], self.state_sizes[-1]])
-            return self.predict(pred_d, layers=self.layers[:self.n_cnn], state_gains=self.curr_gain[:self.n_cnn + 1])
+            return self.predict(pred_d, layers=self.layers[:self.n_cnn],
+                                state_gains=self.c_curr_gain[:self.n_cnn + 1])
         except:  # DNN or CNN model
             return self.predict(target=target)
 
     def freeze(self, params):
-        """ Stop optimisation of weights. State inference remains active. """
+        """ Stops optimisation of weights. State inference remains active. """
         for param in params:
             for lr in self.lr: lr[param] = 0.  # freeze hierarchical weights
             if not self.dynamical:
                 for l_d in self.layers_d: l_d.freeze(params)  # freeze dynamical weights
 
+    def cause(self, l, last=False):
+        """ Returns a layer's cause state with gain """
+        state = self.last_cause[l] if last else self.curr_cause[l]
+        gain = self.c_last_gain[l] if last else self.c_curr_gain[l]
+        return state, gain
 
-def GPC(m, l, dynamical=False, infer_precision=False):
+    def hidden(self, l, last=False):
+        """ Returns a layer's hidden state with gain """
+        if l == 0: return self.cause(l, last=False) # inputs have no hidden states
+        state = self.last_hidden[l] if last else self.curr_hidden[l]
+        gain = self.h_last_gain[l] if last else self.h_curr_gain[l]
+        return state, gain
+
+    def state(self, l, last=False):
+        """ Concatenated hidden & cause states """
+        if l == 0: return self.cause(l, last=False) # inputs have no hidden states
+        state_c = self.cause(l, last=last)
+        state_h = self.hidden(l, last=last)
+        dim = 1 if self.dim[2*l-1] > 1 else -1 # single or multichannel (CNN)
+        state = torch.cat([state_c[0], state_h[0]], dim=dim)
+        gain = torch.cat([state_c[1], state_h[1]], dim=dim)
+        return state, gain
+
+def GPC(m, l, dynamical=False, infer_precision=False, var_prior=7, covar_prior=100000000):
     """ Layer-wise Generalized Predictive Coding optimizer """
 
     if not infer_precision:
@@ -123,40 +198,57 @@ def GPC(m, l, dynamical=False, infer_precision=False):
         opt = SGD(m.params_covar(l))
     opt.zero_grad()  # reset gradients
 
-    # prediction from higher layer prediction_l = weights_l( state_(l+1) * state_gain_(l+1) )
-    pred = m.layers[l].forward(m.currState[l + 1].requires_grad_() * m.curr_gain[l + 1].requires_grad_())
+    # apply gains to all relevant states for this layer's update
+    higher_state = m.state(l+1)
+    higher_state = higher_state[0].requires_grad_() * higher_state[1].requires_grad_().reshape(higher_state[0].shape)  # higher state
+    hidden = m.hidden(l)[0].requires_grad_() * m.hidden(l)[1].requires_grad_().reshape(m.hidden(l)[0].shape)  # current hidden * hidden gain
+    last_hidden = m.hidden(l, last=True)[0].requires_grad_() * m.hidden(l, last=True)[1].requires_grad_().reshape(m.hidden(l, last=True)[0].shape) # last hidden * hidden gain
+    last_state = m.state(l, last=True) # last
 
-    # compute layer's prediction error
-    if dynamical:  # state change error
-        error = (m.currState[l].detach() - m.lastState[l].requires_grad_()).flatten(1) - pred.flatten(1)
-    else:  # state & state change error
+    # prediction from higher layer's current cause and hidden state
+    pred = m.layers[l].forward(higher_state)
+
+    if dynamical:  # higher order state change error (generalised coordinates)
+        error = (hidden.detach() - last_hidden).flatten(1) - pred.flatten(1)
+    else:  # cause prediction error & hidden transition error
+        error = (m.curr_cause[l].requires_grad_()) - pred.reshape(m.curr_cause[l].shape) # predict lower cause before gain
+        error = error.flatten(start_dim=1) # todo remove?
+        error = error.reshape([B_SIZE, -1]).unsqueeze(-1)  # CNN channels have independent precision along batch
+
+        if m.covar[l].shape[-1] <= 1:  # initialise prior cause state (co-)variance
+            m.covar[l] = torch.eye(error.shape[-2]).unsqueeze(0).repeat([B_SIZE_PREC, 1, 1]) * (var_prior - covar_prior) + covar_prior
+
+        F = torch.abs(error) * torch.abs(torch.matmul(m.covar[l].requires_grad_() ** -1, torch.abs(error)))
+
         if TRANSITION:
-            pred_change = m.layers_d[l].layers[0].forward((m.layers_d[l].currState[1].requires_grad_()))
-            pred = pred + pred_change.reshape(pred.shape)
-        error = (m.currState[l].requires_grad_()) - pred.reshape(m.currState[l].shape)
+            try:
+                pred_trans = m.layers_d[l].layers[0].forward(last_state[0].requires_grad_()) # predict from last hidden before gain
+            except:  # layers differ in channel
+                pred_trans = m.layers_d[l].layers[0].forward(last_state[0].requires_grad_().flatten(start_dim=1)) # predict from last hidden before gain
+            error_trans = ((m.curr_hidden[l].requires_grad_()) - pred_trans.reshape(m.curr_hidden[l].shape)).flatten(start_dim=1) # predict current hidden before gain
+            error_trans = error_trans.flatten(start_dim=1) # todo remove?
+            error_trans = error_trans.reshape([B_SIZE, -1]).unsqueeze(-1) # CNN channels have independent precision along batch
 
-    # move CNN channels to batch dimension so that each channel tracks precision independently
-    error = error.reshape([B_SIZE, -1]).unsqueeze(-1)
+            if m.covar_hidden[l].shape[-1] <= 1:  # initialise prior hidden state (co-)variance
+                m.covar_hidden[l] = torch.eye(error_trans.shape[-2]).unsqueeze(0).repeat([B_SIZE_PREC, 1, 1]) * (var_prior - covar_prior) + covar_prior
 
-    if m.covar[l].shape[-1] <= 1:
-        var_prior, covar_prior = 7, 100000000  # (co-)variance prior (hyperparameter)
-        m.covar[l] = torch.eye(error.shape[-2]).unsqueeze(0).repeat([BATCH_SIZE_PRECISION, 1, 1]) * (var_prior - covar_prior) + covar_prior
+            F = F + torch.abs(error_trans) * torch.abs(torch.matmul(m.covar_hidden[l].requires_grad_() ** -1, torch.abs(error_trans)))
 
-    # compute this layer's free energy
-    F = torch.abs(error) * torch.abs(torch.matmul(m.covar[l].requires_grad_() ** -1, torch.abs(error)))
     F.backward(gradient=torch.ones_like(F))  # loss per batch element (not scalar)
     opt.step()
     if infer_precision:
-        m.covar[l] = (m.covar[l] - m.lr[l][4] * m.covar[l]**-1).detach()  # variance decay
+        m.covar[l] = (m.covar[l] - m.lr[l][4] * m.covar[l]**-1).detach()  # cause state variance decay
+        m.covar_hidden[l] = (m.covar_hidden[l] - m.lr[l][4] * m.covar_hidden[l]**-1).detach()  # hidden state variance decay
     return pred.detach().numpy(), error
 
-UPDATES, SCALE, B_SIZE, IMAGE_SIZE = 50, 0, 1, 16*16  # model updates, relative layer updates, batch size, input size
+
+UPDATES, SCALE, B_SIZE, IMAGE_SIZE = 20, 0, 1, 16*16  # model updates, relative layer updates, batch size, input size
 ACTIONS = [1 for i in range(20)]  # actions in Moving MNIST (1 for next frame. see tools.py for spatial movement)
 TRANSITION, DYNAMICAL = True, False  # first order transition model, higher order derivatives (generalized coordinates)
 PRECISION = True  # use precision estimation
 IMG_NOISE = 0.0  # gaussian noise on inputs
-BATCH_SIZE_PRECISION = 1 # either 1 or B_SIZE (batch mean / learning or per batch element / inference)
-CONVERGENCE_TRESHOLD = .1 # criterion to stop optimizing a datapoint
+B_SIZE_PREC = 1 # either 1 or B_SIZE (batch mean / learning or per batch element / inference)
+CONVERGENCE_TRESHOLD = .1 # criterion to stop inference
 
 if __name__ == '__main__':
     for env_id, env_name in enumerate(['Mnist-Train-v0']):  #  'Mnist-Test-v0'
@@ -167,16 +259,18 @@ if __name__ == '__main__':
         # create model
         ch, ch2, ch3 = 64, 64, 128  # CNN channels
         PCN = Model([1 * 16 * 16, ch*8*8, ch*8*8, ch2*4*4, ch2*4*4, ch3*2*2, ch3*2*2, ch3*1*1, ch3*1*1, 64, 64, 4],  # state sizes
-            ELU(), Identity(),  # hierarchical & dynamical activation
+            ELU(), ELU(),  # hierarchical & dynamical activation
             lr_w=np.asarray([0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]) * 0.000,  # 1,  # weights lr
-            lr_sl=np.asarray([0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) * .1,  # lower state lr
+            lr_sl=np.asarray([0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) * 0,  # lower state lr
             lr_sh=np.asarray([1, 1, 1, 1, 1, 1, 1, 1, .1, .1, .1, .1]) * .1,  # higher state lr
             lr_g=np.asarray([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) * 1,  # state gain lr
             dim=[1, ch, ch, ch2, ch2, ch3, ch3, ch3, 1, 1, 1, 1],  # state channels (use 1 for dense layers)
             sr=[2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])  # sampling interval (skipped observations in lower layer)
 
+        model_sizes_summary(PCN)
+
         for a_id, action in enumerate(ACTIONS):  # passive perception task (model has no control)
-            if a_id % 20 == 0 and a_id < len(ACTIONS)-1: # how much history to log and visualize
+            if a_id % 20 == 0 and a_id < len(ACTIONS): # how much history to log and visualize
                 [err_h, err_t, preds_h, preds_t, preds_g], inputs = [[[] for _ in PCN.layers] for _ in range(5)], [[]]
                 precisions, raw_errors, variances_slow, datapoints, total_updates = [], [], None, [], 0
 
@@ -185,61 +279,63 @@ if __name__ == '__main__':
                 obs, rew, done, _ = env.step([action for b in range(B_SIZE)])  # step environment
             input = (torch.Tensor(obs['agent_image'])).reshape([B_SIZE, -1, 64 ** 2]) / 25
             input = torch.nn.MaxPool2d(4, stride=4)(input.reshape([B_SIZE, -1, 64, 64]))  # reduce input size
-            PCN.currState[0] = torch.tensor(input.detach().float()).reshape([B_SIZE, 1, -1])  # feed to model
+            PCN.curr_cause[0] = torch.tensor(input.detach().float()).reshape([B_SIZE, 1, -1])  # feed to model
+            PCN.c_curr_gain[0] = torch.ones_like(PCN.c_curr_gain[0])  # feed to model
 
             converged = False
             for update in range(UPDATES):
                 total_updates += 1
 
                 # update hierarchical layers
-                layers_h = reversed(range(len(PCN.layers)))
+                for l_h in reversed(range(len(PCN.layers))):
 
-                for l_h in layers_h:
                     # freeze weights when testing
                     if env_id == 1: PCN.freeze([3])
 
                     # step hierarchical variables
-                    for i in range(l_h * SCALE + 1): # how often to update layers relative to each other
+                    for i in range(1): # how often to update layers relative to each other
                         p_h, e_h = GPC(PCN, l=l_h)
                         GPC(PCN, l=l_h, infer_precision=True);  # update precision (precision inference)
                         if l_h == 0:
-                            converged = e_h[0].mean(dim=0).mean().abs() < CONVERGENCE_TRESHOLD  # todo convergence criterium
+                            converged = e_h[0].mean(dim=0).mean().abs() < CONVERGENCE_TRESHOLD
                             precisions.append(np.diag(np.array(PCN.covar[0].mean(dim=0).detach())).mean())
                             raw_errors.append(e_h[0].mean(dim=0).detach().numpy().mean())
 
                     # update dynamical layers
                     for l_d in range(1, len(PCN.layers_d[l_h].layers), 1):
                         if DYNAMICAL:
-                            p_d, e_t = GPC(PCN.layers_d[l_h], l=l_d,
-                                           dynamical=True)  # step higher order dynamical variables
-                            if update == UPDATES - 1: PCN.layers_d[l_h].lastState[l_d] = PCN.layers_d[l_h].currState[
+                            p_d, e_t = GPC(PCN.layers_d[l_h], l=l_d, dynamical=True)  # step higher order dynamical variables
+                            if update == UPDATES - 1: PCN.layers_d[l_h].last_cause[l_d] = PCN.layers_d[l_h].curr_cause[
                                 l_d].clone().detach()  # memorize
 
-                        # visualization
-                        if (update == UPDATES - 1 and l_h == 0 and l_d == 1) or (converged and l_h == 0 and l_d == 1):
-                            for d, i in zip([inputs[0], preds_h[l_h], err_h[l_h]], [input[:1], p_h[:1], e_h[:1].detach()]): d.append(i)  # hierarchical
-                            if DYNAMICAL: preds_t[l_d].append(p_d[:1]), err_t[l_d].append(e_t[:1].detach())  # dynamical
-                            p_g = PCN.predict_mixed(target=PCN.currState[-1])[0]
-                            preds_g[l_h].append(p_g[0])  # prediction from target state
-                            if a_id == len(ACTIONS) - 1 :  # visualize batch
-                                for d, n in zip([input, p_h, p_g], ["input", "pred_h", "pred_g"]):
-                                    plot_batch(d, title=str(env_name) + n)
+                    # visualization
+                    if (update == UPDATES - 1 and l_h == 0) or (converged and l_h == 0):
+                        for d, i in zip([inputs[0], preds_h[l_h], err_h[l_h]], [input[:1], p_h[:1], e_h[:1].detach()]): d.append(i)  # hierarchical
+                        if DYNAMICAL: preds_t[l_d].append(p_d[:1]), err_t[l_d].append(e_t[:1].detach())  # dynamical
+                        #p_g = PCN.predict_mixed(target=PCN.state(-1)[0].detach()*PCN.state(-1)[1].detach())[0] # prediction from target state
+                        #preds_g[l_h].append(p_g[0])
+                        if a_id == len(ACTIONS) - 1 :  # visualize batch
+                            for d, n in zip([input, p_h], ["input", "pred_h"]):
+                                plot_batch(d, title=str(env_name) + n)
 
-                    # memorize last state mean and precision
+                    # memorize states and precision
                     if update == UPDATES - 1 or converged:
-                        datapoints.append(total_updates)
-                        PCN.lastState[l_h] = PCN.currState[l_h].clone().detach()
-                        if variances_slow is not None: PCN.covar = variances_slow
-                        _, raw_error = GPC(PCN, l=l_h, infer_precision=True); # update precision once per datapoint
-                        variances_slow = [c.clone().detach() for c in PCN.covar] # track variance over datapoints (precision learning)
+                        if l_h == 0: datapoints.append(total_updates)
+                        PCN.last_cause[l_h] = PCN.curr_cause[l_h].clone().detach()  # memorize hierarchical state
+                        if variances_slow is not None:
+                            PCN.covar = variances_slow
+                            PCN.covar_hidden = variances_slow_hidden
+                        _, raw_error = GPC(PCN, l=l_h, infer_precision=True);  # precision per datapoint
+                        variances_slow = [c.clone().detach() for c in PCN.covar]  # variance per datapoints (learning)
+                        variances_slow_hidden = [c.clone().detach() for c in PCN.covar_hidden]  # variance per datapoints (learning)
                 if converged: break
         env.close()
 
         """ Print summaries """
         model_sizes_summary(PCN);
-        print_layer_variances(PCN,0, title="Posterior");
+        print_layer_variances(PCN,0);
 
         """ Visualize """
-        generate_videos(preds_h, inputs, preds_g, err_h, env_name, nr_videos=3, scale=25);
-        plot_thumbnails(precisions, errors=raw_errors, inputs=inputs, datapoints=datapoints, threshold=0.2);
+        generate_videos(preds_h, inputs, inputs, err_h, env_name, nr_videos=3, scale=25);
+        plot_thumbnails(precisions, errors=raw_errors, inputs=inputs, datapoints=datapoints, threshold=0.2, img_s=2);
         visualize_covariance_matrix(PCN, title=env_name, skip_l=1);
