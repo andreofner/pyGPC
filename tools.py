@@ -32,12 +32,12 @@ def plot_variance_updates(variances, errors=None, title=""):
 
 def plot_thumbnails(variances, errors=None, inputs=None, datapoints=[], img_s=2, threshold = 0.2):
   inputs = np.asarray([p.detach().numpy() for p in inputs[0]]).squeeze()
-  fig, ax = plt.subplots(1, 1, figsize=(10,5))
+  fig, ax = plt.subplots(1, 1, figsize=(10,10))
   plt.plot(variances, label="Inferred Variance", color="blue")
   for i in range(len(datapoints[:-1])):
       ax.vlines(datapoints[i], -5, 10, lw=1, color="grey", ls='dashed', alpha=0.5)
       if np.abs(errors[datapoints[i]]) > threshold:
-          ax.imshow(inputs[i], extent=[datapoints[i]-(img_s//2), datapoints[i]+(img_s//2), -2*img_s, -img_s], aspect=1)
+          ax.imshow(inputs[i], extent=[datapoints[i]-(img_s//2), datapoints[i]+(img_s//2), -img_s, -0], aspect=1)
           ax.vlines(datapoints[i], errors[datapoints[i]], -img_s, lw=1, color="black")
   ax.plot(errors, label="Prediction error", color="red")
   ax.set_title("Prediction error precision (batch mean): Layer 1")
@@ -52,8 +52,12 @@ def plot_thumbnails(variances, errors=None, inputs=None, datapoints=[], img_s=2,
 def model_sizes_summary(PCN):
       print("\nHierarchical weights: "), [print("Layer " + str(l) + ": " + str(list(s))) for l, s in
                                           enumerate(PCN.layers)];
-      print("\nHierarchical states: "), [print("Layer " + str(l) + ": " + str(list(s.shape))) for l, s in
-                                         enumerate(PCN.currState)];
+      print("\nDynamical weights: "), [print("Layer " + str(l) + ": " + str(list(s.layers))) for l, s in
+                                         enumerate(PCN.layers_d)];
+      print("\nCause states: "), [print("Layer " + str(l) + ": " + str(list(s.shape))) for l, s in
+                                         enumerate(PCN.curr_cause)];
+      print("\nHidden states: "), [print("Layer " + str(l) + ": " + str(list(s.curr_cause[0].shape))) for l, s in
+                                         enumerate(PCN.layers_d)];
       print("\nHierarchical covariances: "), [print("Layer " + str(l) + ": " + str(list(s.shape))) for l, s in
                                               enumerate(PCN.covar)];
 
