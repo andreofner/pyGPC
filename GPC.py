@@ -67,16 +67,16 @@ class Model(torch.nn.Module):
         # initialise states, state gain and precision
         [self.curr_cause, self.last_cause] = [self.init_states(mixed=(self.n_cnn > 0)) for _ in range(2)] # states at time t & t-dt
         [self.c_curr_gain, self.c_last_gain] = [self.init_states(mixed=(self.n_cnn > 0)) for _ in range(2)] # state gain at time t & t-dt
-        self.covar = [torch.zeros(1) for _ in self.layers + [None]]  # inverse precision
+        self.covar = [torch.zeros(1) for _ in self.layers + [None]]  # precision
 
         # initialise memory states, state gain
         [self.curr_hidden, self.last_hidden] = [self.init_states(mixed=(self.n_cnn > 0)) for _ in range(2)]  # states at time t & t-dt
         [self.h_curr_gain, self.h_last_gain] = [self.init_states(mixed=(self.n_cnn > 0)) for _ in range(2)]  # state gain at time t & t-dt
-        self.covar_hidden = [torch.zeros(1) for _ in self.layers + [None]]  # inverse precision
+        self.covar_hidden = [torch.zeros(1) for _ in self.layers + [None]]  # precision
 
         if not dynamical:
             self.layers = self.layers_c  # keep only layers with full state as input
-            del self.layers_c # todo improve state initialisation
+            del self.layers_c  # todo improve
 
     def init_states(self, mixed=False):
         """ Create state priors for hierarchical and dynamical layers"""
@@ -96,29 +96,20 @@ class Model(torch.nn.Module):
     def params(self, l, deepest_layer=False, dynamical=False):  # todo optimize last_gain
         """ Parameters and learning rates per layer. Top-down predictability regularizes learning and inference."""
         l_h = l if deepest_layer else l + 1
+        params = [{'params': [self.layers[l][1].weight.requires_grad_()], 'lr': self.lr[l][3]},  # weights (l)
+                  {'params': [self.curr_cause[l + 1]], 'lr': self.lr[l][0]},  # higher state (l+1, t)
+                  {'params': [self.curr_hidden[l + 1]], 'lr': self.lr[l][0]},  # higher state (l+1, t)
+                  {'params': [self.curr_cause[l]], 'lr': self.lr[l][1]},  # lower state (l, t-dt)
+                  {'params': [self.curr_hidden[l]], 'lr': self.lr[l][1]},  # lower hidden state (l, t-dt)
+                  {'params': [self.last_cause[l]], 'lr': self.lr[l][2]},  # lower state (l, t)
+                  {'params': [self.last_hidden[l]], 'lr': self.lr[l][2]},  # lower hidden state (l, t)
+                  {'params': [self.c_curr_gain[l]], 'lr': self.lr[l][5]},  # state gain (l)
+                  {'params': [self.h_curr_gain[l]], 'lr': self.lr[l][5]},  # state gain (l)
+                  {'params': [self.c_curr_gain[l + 1]], 'lr': self.lr[l_h][5]},  # state gain (l)
+                  {'params': [self.h_curr_gain[l + 1]], 'lr': self.lr[l_h][5]}]  # state gain (l)
         if not dynamical:
-            params = [{'params': [self.layers[l][1].weight.requires_grad_()], 'lr': self.lr[l][3]}, # top-down weights (l)
-                      {'params': [self.curr_cause[l + 1]], 'lr': self.lr[l][0]},  # higher state (l+1,t)
-                      {'params': [self.curr_hidden[l + 1]], 'lr': self.lr[l][0]},  # higher state (l+1,t)
-                      {'params': [self.curr_cause[l]], 'lr': self.lr[l][1]},  # lower state (l,t-dt)
-                      {'params': [self.curr_hidden[l]], 'lr': self.lr[l][1]},  # lower hidden state (l,t-dt)
-                      {'params': [self.last_cause[l]], 'lr': self.lr[l][2]},  # lower state (l,t)
-                      {'params': [self.last_hidden[l]], 'lr': self.lr[l][2]},  # lower hidden state (l,t)
-                      {'params': [self.c_curr_gain[l]], 'lr': self.lr[l][5]},  # state gain (l)
-                      {'params': [self.h_curr_gain[l]], 'lr': self.lr[l][5]},  # state gain (l)
-                      {'params': [self.c_curr_gain[l+1]], 'lr': self.lr[l_h][5]},  # state gain (l)
-                      {'params': [self.h_curr_gain[l+1]], 'lr': self.lr[l_h][5]}]  # state gain (l)
-            return params+self.layers_d[l].params(l=0, dynamical=True)
+            return params+self.layers_d[l].params(l=0, dynamical=True, deepest_layer=(0 == len(self.layers_d[l].layers) - 1))
         else:
-            params = [{'params': [self.layers[l][1].weight.requires_grad_()], 'lr': self.lr[l][3]}, # top-down weights (l)
-                      {'params': [self.curr_cause[l + 1]], 'lr': self.lr[l][0]},  # higher state (l+1,t)
-                      {'params': [self.curr_hidden[l + 1]], 'lr': self.lr[l][0]},  # higher state (l+1,t)
-                      {'params': [self.curr_cause[l]], 'lr': self.lr[l][1]},  # lower state (l,t-dt)
-                      {'params': [self.curr_hidden[l]], 'lr': self.lr[l][1]},  # lower state (l,t-dt)
-                      {'params': [self.last_cause[l]], 'lr': self.lr[l][2]},  # lower state (l,t)
-                      {'params': [self.last_hidden[l]], 'lr': self.lr[l][2]},  # lower state (l,t)
-                      {'params': [self.c_curr_gain[l]], 'lr': self.lr[l][5]},  # state gain (l)
-                      {'params': [self.h_curr_gain[l]], 'lr': self.lr[l][5]}]  # state gain (l)
             return params
 
     def params_covar(self, l):
@@ -289,12 +280,12 @@ def GPC(m, l, dynamical=False, infer_precision=False, var_prior=7, covar_prior=1
 
 
 UPDATES, SCALE, B_SIZE, IMAGE_SIZE = 10, 0, 1, 16*16  # model updates, relative layer updates, batch size, input size
-ACTIONS = [1 for i in range(20)]  # actions in Moving MNIST (1 for next frame. see tools.py for spatial movement)
+ACTIONS = [1 for i in range(10)]  # actions in Moving MNIST (1 for next frame. see tools.py for spatial movement)
 TRANSITION, DYNAMICAL = True, False  # first order transition model, higher order derivatives (generalized coordinates)
 PRECISION = True  # use precision estimation
 IMG_NOISE = 0.0  # gaussian noise on inputs
-B_SIZE_PREC = 1 # either 1 or B_SIZE (batch mean / learning or per batch element / inference)
-CONVERGENCE_TRESHOLD = .1 # inference stops at this error threshold
+B_SIZE_PREC = 1  # batch size to compute precision: either 1 (mean of batch) or B_SIZE
+CONVERGENCE_TRESHOLD = .1  # inference stops at this error threshold
 
 if __name__ == '__main__':
     for env_id, env_name in enumerate(['Mnist-Train-v0']):  #  'Mnist-Test-v0'
@@ -302,7 +293,7 @@ if __name__ == '__main__':
         env = gym.make(env_name); env.reset()
 
         # create model and print summary
-        ch, ch2, ch3 = 64, 64, 128  # CNN channels
+        ch, ch2, ch3 = 64, 64, 64  # CNN channels
         PCN = Model([1 * 16 * 16, ch*8*8, ch*8*8, ch2*4*4, ch2*4*4, ch3*2*2, ch3*2*2, ch3*1*1, ch3*1*1, 64, 64, 4],  # state sizes
             ELU(), ELU(),  # hierarchical & dynamical activation
             lr_w=np.asarray([0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]) * 0.0, # weights lr
