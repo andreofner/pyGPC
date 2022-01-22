@@ -4,4 +4,4 @@
 ![alt Overview](https://github.com/andreofner/pyGPC/blob/master/details.png)
 
 
-![alt Overview](https://github.com/andreofner/pyGPC/blob/master/DGM.png)
+![alt Overview](https://github.com/andreofner/pyGPC/blob/master/DGM_summary.png)
