@@ -61,10 +61,11 @@ def model_sizes_summary(PCN):
       print("\nHierarchical covariances: "), [print("Layer " + str(l) + ": " + str(list(s.shape))) for l, s in
                                               enumerate(PCN.covar)];
 
-def generate_videos(preds_h, inputs, preds_g, err_h, env_name, nr_videos=3, scale=1):
+def generate_videos(preds_h, inputs, preds_g, preds_gt, err_h, env_name, nr_videos=3, scale=1):
       preds_h = [[p.clip(min=0) for p in preds_h[0]]]
       preds_g = [[p.clip(min=0) for p in preds_g[0]]]
-      for s, t in zip([preds_h, inputs, preds_g, err_h][:nr_videos], ['p_h', 'ins', 'p_g', 'e_h'][:nr_videos]):
+      preds_gt = [[p.clip(min=0) for p in preds_gt[0]]]
+      for s, t in zip([preds_h, inputs, preds_g, preds_gt, err_h][:nr_videos], ['p_h', 'ins', 'p_g', 'p_gt', 'e_h'][:nr_videos]):
             sequence_video(s, t, scale=scale, env_name=str(env_name))
 
 def visualize_covariance_matrix(PCN, skip_l=2, title=""):
