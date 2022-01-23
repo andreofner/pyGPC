@@ -1,4 +1,4 @@
-![alt Overview](https://github.com/andreofner/pyGPC/blob/master/GPC_OV.png)
+![alt Overview](https://github.com/andreofner/pyGPC/blob/master/PC_summary.png)
 
 
 ![alt Overview](https://github.com/andreofner/pyGPC/blob/master/details.png)
