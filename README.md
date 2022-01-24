@@ -7,4 +7,4 @@
 ![alt Overview](https://github.com/andreofner/pyGPC/blob/master/DGM_GPC.png)
 
 
-![alt Overview](https://github.com/andreofner/pyGPC/blob/master/Coordinates.png)
+![alt Overview](https://github.com/andreofner/pyGPC/blob/master/perception_action.png)
