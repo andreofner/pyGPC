@@ -1,10 +1,5 @@
 ![alt Overview](https://github.com/andreofner/pyGPC/blob/master/PC_summary.png)
 
 
-![alt Overview](https://github.com/andreofner/pyGPC/blob/master/details.png)
+![alt Overview](https://github.com/andreofner/pyGPC/blob/master/figures/summary_pa.png)
 
-
-![alt Overview](https://github.com/andreofner/pyGPC/blob/master/DGM_GPC.png)
-
-
-![alt Overview](https://github.com/andreofner/pyGPC/blob/master/perception_action.png)
