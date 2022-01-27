@@ -3,3 +3,5 @@
 
 ![alt Overview](https://github.com/andreofner/pyGPC/blob/master/figures/summary_pa.png)
 
+![alt Overview](https://github.com/andreofner/pyGPC/blob/master/figures/Marr.png)
+
