@@ -189,7 +189,7 @@ def batch_accuracy(pred_g, target, batch_size):
     accuracy = 100. * correct / batch_size
     return accuracy, pred_classes, correct
 
-def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10000000, transition=False, learn=False):
+def GPC(m, l, infer_precision=False, optimize=True, var_prior=1, covar_prior=10000000, transition=False, learn=False):
     """ Layer-wise Generalized Predictive Coding optimizer """
 
     batch_size = m.state(l).shape[0]
@@ -235,9 +235,15 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10
                     var_prior - covar_prior) + covar_prior
 
     if learn:
-        F = torch.abs(error) * torch.abs(torch.matmul(m.covar_slow[l].requires_grad_() ** -1, torch.abs(error))) #torch.abs(error) *
+        if l >0:
+            F = torch.abs(error) * torch.abs(torch.matmul(m.covar_slow[l].requires_grad_() ** -1, torch.abs(error))) #torch.abs(error) *
+        else:
+            F = torch.abs(error)
     else:
-        F = torch.abs(error) * torch.abs(torch.matmul(m.covar[l].requires_grad_() ** -1, torch.abs(error))) #torch.abs(error) *
+        if l >0:
+            F = torch.abs(error) * torch.abs(torch.matmul(m.covar[l].requires_grad_() ** -1, torch.abs(error))) #torch.abs(error) *
+        else:
+            F = torch.abs(error)
 
     if optimize: # optimize hierarchical prediction
         F.backward(gradient=torch.ones_like(F))  # loss per batch element (not scalar)
@@ -285,8 +291,8 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10
 
 
 """ Network settings"""
-UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 100, 64, 1024, 10  # model updates, batch size, input size
-CONVERGED_INFER = .1  # prediction error threshold to stop inference
+UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 100, 128, 512, 10  # model updates, batch size, input size
+CONVERGED_INFER = .8  # prediction error threshold to stop inference
 PRECISION = True
 STATE_SIZES = [10, 28*28]  # (output size, input size) per layer
 CAUSE_SPLIT, HIDDEN_SPLIT = 1, 0 # causes & hidden states used for outgoing prediction
@@ -314,17 +320,16 @@ if __name__ == '__main__':
     PCN = Model(STATE_SIZES, act=torch.nn.Identity(),  # hierarchical activation
                 lr_sh=[0 for i in range(len(STATE_SIZES)-2)]+[0],  # higher state learning rate
                 lr_sl=[0] + [0 for i in range(len(STATE_SIZES) - 1)],  # state learning rate
-                lr_w=[0.000001 for i in range(len(STATE_SIZES))],  # hierarchical weights learning rate
+                lr_w=[0.0001 for i in range(len(STATE_SIZES))],  # hierarchical weights learning rate
                 lr_w_d=[0 for i in range(len(STATE_SIZES))],  # dynamical weights learning rate
-                lr_p=[0.001 for i in range(len(STATE_SIZES))],  # hierarchical & dynamical precision learning rate
+                lr_p=[0.00 for i in range(len(STATE_SIZES))],  # hierarchical & dynamical precision learning rate
                 sr=[1 for i in range(14)])  # sampling interval (skipped observations in lower layer)
 
-    for env_id, env_name in enumerate(['Train', 'Test'][:1]):
+    for env_id, env_name in enumerate(['Train', 'Test'][:2]):
 
         if env_id == 0: # train
             batch_size = B_SIZE
             DATAPOINTS = train_loader.dataset.train_data.shape[0] // batch_size  # number of datapoints
-            #DATAPOINTS = 10
             data_loader = train_loader
         else: # test
             batch_size = B_SIZE_TEST
