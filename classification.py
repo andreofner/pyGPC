@@ -123,7 +123,7 @@ class Model(torch.nn.Module):
         if l > 0:
             state_grad = torch.concat([self.cause(l=l).grad, self.hidden(l=l).grad], -1)
             # multiply binary mask of state gradients with weights
-            PCN.layers[l-1][1].weight.grad = PCN.layers[l-1][1].weight.grad * (state_grad[0]>0)*1.
+            self.layers[l-1][1].weight.grad = self.layers[l-1][1].weight.grad * (state_grad[0]>0)*1.
 
 def predict(m, l, keep_states=True):
     """ Prediction through the cause states of the entire network."""
@@ -171,10 +171,10 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10
     if transition:
         try:
             # transition the hidden to generate its prior prediction
-            PCN.curr_hidden[l+1] = m.layers_d[l+1].forward(m.state(l+1).detach()).detach()
+            m.curr_hidden[l+1] = m.layers_d[l+1].forward(m.state(l+1).detach()).detach()
 
             # remember the prior hidden state to be able to predict its change
-            current_hidden_prior = PCN.curr_hidden[l+1].detach()
+            current_hidden_prior = m.curr_hidden[l+1].detach()
         except:
             transition = False  # reached highest layer
 
@@ -262,17 +262,17 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10
     return pred.detach().numpy(), error, torch.zeros_like(pred)
 
 
-def feed_target(PCN, batch_size):
+def feed_target(PCN, input, batch_size, test):
     """ Feed target to model """
     torch.nn.init.xavier_uniform_(PCN.curr_cause[-1])
-    if not (TEST_TARGET and env_id > 0):  # evaluate target reconstruction
+    if not (TEST_TARGET and test):  # evaluate target reconstruction
         PCN.curr_cause[-1] = torch.tensor(input.flip(-1).detach().float()).reshape(
             [batch_size, 1, -1])  # e.g. mirrored input image as target
 
-def feed_observation(PCN, batch_size):
+def feed_observation(PCN, target, batch_size, test):
     """ Feed observation to model """
     torch.nn.init.xavier_uniform_(PCN.curr_cause[0])
-    if not (TEST_INPUT and env_id > 0):  # evaluate input reconstruction
+    if not (TEST_INPUT and test):  # evaluate input reconstruction
         PCN.curr_cause[0] = torch.zeros_like(PCN.curr_cause[0])
         for b in range(batch_size):
             for c in range(0,IMAGE_SIZE,16):
@@ -371,9 +371,9 @@ def run():
 
             """ Prior prediction """
             if True:
-                feed_target(PCN, batch_size=batch_size)
+                feed_target(PCN, batch_size=batch_size, input=input, test=env_id>0)
                 pred_g_prior = predict(PCN, l=len(PCN.layers)-1, keep_states=False)
-                feed_observation(PCN, batch_size=batch_size)
+                feed_observation(PCN, batch_size=batch_size, target=target, test=env_id>0)
                 _, e_h_prior, _ = GPC(PCN, l=0, infer_precision=True, optimize=False, transition=False, learn=False)
                 accuracy_prior, pred_classes_prior, correct_prior = batch_accuracy(pred_g_prior, target, batch_size=batch_size)
 
@@ -397,12 +397,12 @@ def run():
 
             """ Optionally predict through entire network first. """
             if PREDICT_FIRST:
-                feed_target(PCN, batch_size=batch_size)
+                feed_target(PCN, batch_size=batch_size, input=input, test=env_id>0)
                 predict(PCN, l=len(PCN.layers)-1, keep_states=False)
 
             """ Feed target ("deepest prior" or "cause") and input ("outcome") """
-            feed_target(PCN, batch_size=batch_size)
-            feed_observation(PCN, batch_size=batch_size)
+            feed_target(PCN, batch_size=batch_size, input=input, test=env_id > 0)
+            feed_observation(PCN, batch_size=batch_size, target=target, test=env_id>0)
 
             """  Optimise hierarchical layers in parallel """
             for update in range(UPDATES):
@@ -455,6 +455,8 @@ def run():
                                   "\t Prior Acc:", accuracy_prior.round(decimals=1),
                                   "\t Posterior Acc:", accuracy.round(decimals=1) )
 
+        results.append(accuracy_prior)
+
         if PLOT and env_id == 0:
 
             plt.style.use(['seaborn-paper'])
@@ -462,13 +464,11 @@ def run():
             # visualize results
             plot_thumbnails([precisions_slow[0], precisions[0]], ["Cause state precision (learning)", "Cause state precision (inference)"],
                             errors=raw_errors[0], inputs=None, datapoints=datapoints, threshold=0.2, img_s=2, l=1);
-            try:  # second layer, if available
+            try:  # visualize second layer if available
                 plot_thumbnails([precisions_slow[1], precisions[1]], ["Cause state precision (learning)", "Cause state precision (inference)"],
                                 errors=raw_errors[1], inputs=None, datapoints=datapoints, threshold=0.2, img_s=2, l=2);
             except:
                 pass
-
-        results.append(accuracy_prior)
 
     if SUMMARY:
         table(data=np.array([[r.round(decimals=1) for r in results]]),
