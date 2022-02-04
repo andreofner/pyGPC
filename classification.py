@@ -24,8 +24,8 @@ class Model(torch.nn.Module):
         self.sizes = sizes  # hierarchical state sizes
         self.sr = sr  # sampling rate per layer
         self.lr_names = ["Higher state", "State", "Weights", "Precision", "Dynamical weights"]
-        self.initialised = False
-        self.initialised_slow = False
+        self.initialised = [False for _ in sizes] # inferred covariance gets initialised at first update
+        self.initialised_slow = [False for _ in sizes] # learned covariance gets initialised at first update
 
         for i in range(0, len(self.sizes ), 2):
             # create hierarchical layers
@@ -182,11 +182,10 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10
     higher_state = m.state(l+1)
     pred = m.layers[l].forward(higher_state)
 
-    if True:
-        if l == 0:  # negative log likelihood for multi-class classification
-            target = (m.curr_cause[l].requires_grad_()).argmax(-1).squeeze()
-            output = pred.reshape([batch_size, -1])
-            error = torch.nn.functional.nll_loss(torch.nn.functional.log_softmax(output), target, reduction='mean')  # , reduction='mean'
+    if True and l==0: # optionally use negative log likelihood for multi-class classification
+        target = (m.curr_cause[l].requires_grad_()).argmax(-1).squeeze()
+        output = pred.reshape([batch_size, -1])
+        error = torch.nn.functional.nll_loss(torch.nn.functional.log_softmax(output), target, reduction='mean')  # , reduction='mean'
         error = error.unsqueeze(-1).unsqueeze(-1)
     else:
         target = (m.curr_cause[l].requires_grad_())
@@ -195,17 +194,17 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10
         error = error.abs().mean(-1).unsqueeze(-1).unsqueeze(-1)
 
     # initialise fast and slow cause state precision
-    if not m.initialised_slow:
+    if not m.initialised_slow[l]:
         if m.covar_slow[l].shape[-1] <= 1:  # initialise prior cause state (co-)variance
             m.covar_slow[l] = torch.eye(error.shape[-2]).unsqueeze(0).repeat([B_SIZE_PRECISION_SLOW, 1, 1]) * (
                         var_prior - covar_prior) + covar_prior
-        m.initialised_slow = True
+        m.initialised_slow[l] = True
 
-    if not m.initialised:
+    if not m.initialised[l]:
         if m.covar[l].shape[-1] <= 1:  # initialise prior cause state (co-)variance
             m.covar[l] = torch.eye(error.shape[-2]).unsqueeze(0).repeat([batch_size, 1, 1]) * (
                         var_prior - covar_prior) + covar_prior
-        m.initialised = True
+        m.initialised[l] = True
 
     if learn:
         F = error * torch.matmul(m.covar_slow[l].requires_grad_() ** -1, error)
@@ -301,9 +300,9 @@ def batch_accuracy(pred_g, target, batch_size):
 
 
 """ Network settings"""
-UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 200, 32, 1024, 10  # model updates, batch size, input size
+UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 10, 8, 1024, 10  # model updates, batch size, input size
 CONVERGED_INFER = .1  # prediction error threshold to stop inference
-SIZES = [10, 28*28]  # (output size, input size) per layer
+SIZES = [10, 32, 32, 28*28]  # (output size, input size) per layer
 CAUSE_SPLIT, HIDDEN_SPLIT = 1, 0 # causes & hidden states used for outgoing prediction
 PREDICT_FIRST = False # propagate prediction through entire network before computing errors
 PRECISION = True  # estimate fast (inference, within datapoint) and slow precision (learning, between datapoint)
@@ -321,11 +320,11 @@ if __name__ == '__main__':
 
     PCN = Model(SIZES,
                 act=torch.nn.Identity(),  # activation function of hierarchical weights
-                lr_sh=[0 for i in range(len(SIZES)-2)]+[0],  # higher state learning rate
-                lr_sl=[0] + [0 for i in range(len(SIZES))],  # state learning rate
+                lr_sh=[1 for i in range(len(SIZES)-2)]+[0],  # higher state learning rate
+                lr_sl=[0] + [1 for i in range(len(SIZES))],  # state learning rate
                 lr_w=[0.0001 for i in range(len(SIZES))],  # hierarchical weights learning rate
                 lr_w_d=[0 for i in range(len(SIZES))],  # dynamical weights learning rate
-                lr_p=[.005 for i in range(len(SIZES))],  # hierarchical & dynamical precision learning rate    --> this learning rate should be roughly 10% of the currently inferred variance --> so that precise measure change slowly and unprecise measures change more quickly.. tempoerature param..
+                lr_p=[.1 for i in range(len(SIZES))],  # hierarchical & dynamical precision learning rate    --> this learning rate should be roughly 10% of the currently inferred variance --> so that precise measure change slowly and unprecise measures change more quickly.. tempoerature param..
                 sr=[1 for i in range(14)])  # sampling interval (skipped observations in lower layer)
 
     results = []
