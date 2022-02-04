@@ -7,12 +7,37 @@ import gym
 import random
 import numpy as np
 import sys, os, math
+import torch
 from gym.utils import seeding
 from tensorflow import keras
 import matplotlib.pyplot as plt
+import torchvision
+from torchvision import transforms
 from moviepy.editor import ImageSequenceClip
 from gym.envs.registration import register as gym_register
 from GPC import B_SIZE, IMAGE_SIZE
+import pandas as pd
+
+IMG_NOISE = 0.0  # gaussian noise on inputs
+
+def table(data=np.array([[1, 2], [3, 4]]), rows=["Model 1", "Model 2"], columns=["Train", "Test"], print_latex=False, print_=True):
+      df = pd.DataFrame(data=data, index=rows, columns=columns)
+      if print_:
+            if print_: print(df)
+            if print_latex: print(df.style.to_latex())
+      else:
+            return df, df.style.to_latex()
+
+def torchvision_mnist(batch_size=1, train=True, image_size=28, download=True):
+    loader = torch.utils.data.DataLoader(torchvision.datasets.MNIST('./', train=train, download=download,
+                                                                          transform=torchvision.transforms.Compose(
+                                                                              [torchvision.transforms.ToTensor(),
+                                                                               torchvision.transforms.Resize(image_size),
+                                                                                  torchvision.transforms.Normalize(
+                                                                                      (0.1307,), (0.3081,))])),
+        batch_size=batch_size, shuffle=True)
+    return loader
+
 
 """ Plotting helpers"""
 def print_layer_variances(PCN, l=0, title="Prior"):
@@ -30,34 +55,60 @@ def plot_variance_updates(variances, errors=None, title=""):
       plt.grid()
       plt.show()
 
-def plot_thumbnails(variances, errors=None, inputs=None, datapoints=[], img_s=2, threshold = 0.2):
-  inputs = np.asarray([p.detach().numpy() for p in inputs[0]]).squeeze()
-  fig, ax = plt.subplots(1, 1, figsize=(10,10))
-  plt.plot(variances, label="Inferred Variance", color="blue")
-  for i in range(len(datapoints[:-1])):
-      ax.vlines(datapoints[i], -5, 10, lw=1, color="grey", ls='dashed', alpha=0.5)
-      if np.abs(errors[datapoints[i]]) > threshold:
-          ax.imshow(inputs[i], extent=[datapoints[i]-(img_s//2), datapoints[i]+(img_s//2), -img_s, -0], aspect=1)
-          ax.vlines(datapoints[i], errors[datapoints[i]], -img_s, lw=1, color="black")
-  ax.plot(errors, label="Prediction error", color="red")
-  ax.set_title("Prediction error precision (batch mean): Layer 1")
-  ax.set_ylabel("Magnitude (batch mean)")
-  ax.set_xlabel("Update")
-  ax.set_ylim(-5,10)
-  ax.legend(loc='upper right')
-  plt.yticks([t for t in plt.yticks()[0] if t >= 0])
-  plt.grid(axis='y')
-  plt.show()
+def plot_thumbnails(variances=[], variance_labels=[], errors=None, inputs=None, datapoints=[], img_s=2, threshold = 0.2, l=1):
+
+      if inputs is not None:
+            try:
+                  inputs = np.asarray([p.detach().numpy() for p in inputs[0]]).squeeze()
+            except:
+                  try:
+                        inputs = np.asarray([pred.squeeze() for pred in inputs[0]])
+                        inputs = inputs.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
+                        inputs = np.asarray([p.detach().numpy() for p in inputs[0]]).squeeze()
+                  except:
+                        inputs = np.asarray([pred.detach().numpy().squeeze() for pred in inputs[0]])
+                        inputs = inputs.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
+                        inputs = np.asarray([p.detach().numpy() for p in inputs[0]]).squeeze()
+
+      fig, ax = plt.subplots(1, 1)
+      for var, label in zip(variances, variance_labels):
+            try:
+                  plt.plot(var, label=label)
+            except:
+                  pass
+      for i in range(len(datapoints[:-1])):
+            if inputs is not None:
+                  ax.vlines(datapoints[i], -5, 10, lw=1, color="grey", ls='dashed', alpha=0.5)
+                  if np.abs(errors[datapoints[i]]) > threshold:
+                        if inputs is not None:
+                              ax.imshow(inputs[i], extent=[datapoints[i] - (img_s // 2), datapoints[i] + (img_s // 2), -img_s, -0],
+                                        aspect=1)
+                        ax.vlines(datapoints[i], errors[datapoints[i]], -img_s, lw=1, color="black")
+      ax.plot(errors, label="Prediction error", color="red")
+      try:
+            ax.set_title("Prediction error precision (batch mean): Layer" + str(l))
+      except:
+            pass
+      ax.set_ylabel("Magnitude (batch mean)")
+      ax.set_xlabel("Update")
+      ax.legend(loc='upper right')
+      plt.yticks([t for t in plt.yticks()[0] if t >= 0])
+      plt.grid(axis='y')
+      plt.show()
 
 def model_sizes_summary(PCN):
       print("\nHierarchical weights: "), [print("Layer " + str(l) + ": " + str(list(s))) for l, s in
                                           enumerate(PCN.layers)];
       print("\nDynamical weights: "), [print("Layer " + str(l) + ": " + str(list(s.layers))) for l, s in
-                                         enumerate(PCN.layers_d)];
+                                         enumerate(PCN.layers_d[1:])];
       print("\nCause states: "), [print("Layer " + str(l) + ": " + str(list(s.shape))) for l, s in
                                          enumerate(PCN.curr_cause)];
-      print("\nHidden states: "), [print("Layer " + str(l) + ": " + str(list(s.curr_cause[0].shape))) for l, s in
-                                         enumerate(PCN.layers_d)];
+      print("\nHidden states: "), [print("Layer " + str(l) + ": " + str(list(s.shape))) for l, s in
+                                         enumerate(PCN.curr_hidden)];
+      print("\nDynamical cause states: "), [print("Layer " + str(l) + ": " + str(list(s.curr_cause[0].shape))) for l, s in
+                                         enumerate(PCN.layers_d[1:])];
+      print("\nDynamical hidden states: "), [print("Layer " + str(l) + ": " + str(list(s.curr_hidden[0].shape))) for l, s in
+                                         enumerate(PCN.layers_d[1:])];
       print("\nHierarchical covariances: "), [print("Layer " + str(l) + ": " + str(list(s.shape))) for l, s in
                                               enumerate(PCN.covar)];
 
@@ -68,11 +119,11 @@ def generate_videos(preds_h, inputs, preds_g, preds_gt, err_h, env_name, nr_vide
       for s, t in zip([preds_h, inputs, preds_g, preds_gt, err_h][:nr_videos], ['p_h', 'ins', 'p_g', 'p_gt', 'e_h'][:nr_videos]):
             sequence_video(s, t, scale=scale, env_name=str(env_name))
 
-def visualize_covariance_matrix(PCN, skip_l=2, title=""):
+def visualize_covariance_matrix(PCN, skip_l=2, title="", batch_id=-1):
       for covar, covar_type in zip([PCN.covar], [""]):
             fig, axs = plt.subplots(len(PCN.layers[::skip_l]), figsize=(5, 10))
             for i, ax in enumerate(axs):
-                  l = ax.imshow(covar[i].detach().squeeze() ** -1)
+                  l = ax.imshow(covar[i][batch_id].detach().squeeze() ** -1)
                   ax.set_xticks([]);
                   ax.set_yticks([])
                   ax.set_xlabel("Layer " + str(i * skip_l + 1))
@@ -82,17 +133,30 @@ def visualize_covariance_matrix(PCN, skip_l=2, title=""):
             plt.show()
             plt.close()
 
-def plot_batch(batch, p=0, show=False, title=""):
+def plot_batch(batch, p=0, show=False, title="", targets=None, predictions=None):
       fig, axs = plt.subplots(4,4)
       for i in range(4):
         for j in range(4):
             try:
-                  axs[i,j].imshow(batch[p].reshape([16,16]))
+                  axs[i,j].imshow(batch[p].reshape([int(math.sqrt(IMAGE_SIZE)),int(math.sqrt(IMAGE_SIZE))]))
             except:
                   pass
-            p += 1
             axs[i, j].set_xticks([])
             axs[i, j].set_yticks([])
+            if targets is not None:
+                  if predictions is not None:
+                        try:
+                              axs[i, j].set_title(str(targets[p].detach().numpy().astype(np.int))+" Prediction: "+str(predictions[p].detach().numpy().astype(np.int)))
+                        except:
+                              pass
+                  else:
+                        try:
+                              axs[i, j].set_title("Target: "+str(targets[p].detach().numpy()))
+                        except:
+                              pass
+
+            p += 1
+
       plt.tight_layout()
       if show:
           plt.show()
