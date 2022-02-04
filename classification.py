@@ -316,8 +316,7 @@ DM_THRESHOLD = .1  # allowed error fluctuation for delayed updates (see nature.c
 SUMMARY = True
 PLOT = True
 
-if __name__ == '__main__':
-
+def run():
     PCN = Model(SIZES,
                 act=torch.nn.Identity(),  # activation function of hierarchical weights
                 lr_sh=[1 for i in range(len(SIZES)-2)]+[0],  # higher state learning rate
@@ -475,3 +474,5 @@ if __name__ == '__main__':
         table(data=np.array([[r.round(decimals=1) for r in results]]),
               rows=[str(len(PCN.layers))+" layer PCN"], columns=["Train Accuracy", "Test Accuracy"], print_latex=False)
 
+if __name__ == '__main__':
+    run()
