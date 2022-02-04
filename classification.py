@@ -220,6 +220,8 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10
         opt.step()
 
     if infer_precision: # update precision decay
+        # todo precision dependent decay
+        # todo keep each covariance unit separately >= 1
         if learn:
             if m.initialised_slow and m.covar_slow[l].diagonal().min() >= 1 :
                 m.covar_slow[l] = (m.covar_slow[l] - m.lr[l][3] * m.covar_slow[l]**-1).detach()  # cause state variance decay
@@ -323,7 +325,7 @@ if __name__ == '__main__':
                 lr_sl=[0] + [0 for i in range(len(SIZES))],  # state learning rate
                 lr_w=[0.0001 for i in range(len(SIZES))],  # hierarchical weights learning rate
                 lr_w_d=[0 for i in range(len(SIZES))],  # dynamical weights learning rate
-                lr_p=[.01 for i in range(len(SIZES))],  # hierarchical & dynamical precision learning rate    --> this learning rate should be roughly 10% of the currently inferred variance --> so that precise measure change slowly and unprecise measures change more quickly.. tempoerature param..
+                lr_p=[.005 for i in range(len(SIZES))],  # hierarchical & dynamical precision learning rate    --> this learning rate should be roughly 10% of the currently inferred variance --> so that precise measure change slowly and unprecise measures change more quickly.. tempoerature param..
                 sr=[1 for i in range(14)])  # sampling interval (skipped observations in lower layer)
 
     results = []
@@ -334,7 +336,7 @@ if __name__ == '__main__':
             batch_size = B_SIZE
             data_loader = torchvision_mnist(B_SIZE, train=True)
             DATAPOINTS = data_loader.dataset.train_data.shape[0] // batch_size  # number of datapoints
-            DATAPOINTS = 100
+            DATAPOINTS = 200
             PCN.create_states(batch_size=batch_size)
             PCN.create_covar() # create covariance
         else: # test
