@@ -1,2 +1,2 @@
-![alt Overview](https://github.com/andreofner/pyGPC/blob/master/summary_GPC.drawio.png)
+![alt Overview](https://github.com/andreofner/pyGPC/blob/master/summary.drawio.png)
 
