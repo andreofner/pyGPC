@@ -300,9 +300,9 @@ def batch_accuracy(pred_g, target, batch_size):
 
 
 """ Network settings"""
-UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 10, 8, 1024, 10  # model updates, batch size, input size
+UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 100, 256, 1024, 10  # model updates, batch size, input size
 CONVERGED_INFER = .1  # prediction error threshold to stop inference
-SIZES = [10, 32, 32, 28*28]  # (output size, input size) per layer
+SIZES = [10, 64, 64, 28*28]  # (output size, input size) per layer
 CAUSE_SPLIT, HIDDEN_SPLIT = 1, 0 # causes & hidden states used for outgoing prediction
 PREDICT_FIRST = False # propagate prediction through entire network before computing errors
 PRECISION = True  # estimate fast (inference, within datapoint) and slow precision (learning, between datapoint)
@@ -324,7 +324,7 @@ if __name__ == '__main__':
                 lr_sl=[0] + [1 for i in range(len(SIZES))],  # state learning rate
                 lr_w=[0.0001 for i in range(len(SIZES))],  # hierarchical weights learning rate
                 lr_w_d=[0 for i in range(len(SIZES))],  # dynamical weights learning rate
-                lr_p=[.1 for i in range(len(SIZES))],  # hierarchical & dynamical precision learning rate    --> this learning rate should be roughly 10% of the currently inferred variance --> so that precise measure change slowly and unprecise measures change more quickly.. tempoerature param..
+                lr_p=[.01 for i in range(len(SIZES))],  # hierarchical & dynamical precision learning rate    --> this learning rate should be roughly 10% of the currently inferred variance --> so that precise measure change slowly and unprecise measures change more quickly.. tempoerature param..
                 sr=[1 for i in range(14)])  # sampling interval (skipped observations in lower layer)
 
     results = []
@@ -335,7 +335,7 @@ if __name__ == '__main__':
             batch_size = B_SIZE
             data_loader = torchvision_mnist(B_SIZE, train=True)
             DATAPOINTS = data_loader.dataset.train_data.shape[0] // batch_size  # number of datapoints
-            DATAPOINTS = 200
+            DATAPOINTS = 10 # 200
             PCN.create_states(batch_size=batch_size)
             PCN.create_covar() # create covariance
         else: # test
@@ -457,6 +457,9 @@ if __name__ == '__main__':
                                   "\t Posterior Acc:", accuracy.round(decimals=1) )
 
         if PLOT and env_id == 0:
+
+            plt.style.use(['seaborn-paper'])
+
             # visualize results
             plot_thumbnails([precisions_slow[0], precisions[0]], ["Cause state precision (learning)", "Cause state precision (inference)"],
                             errors=raw_errors[0], inputs=None, datapoints=datapoints, threshold=0.2, img_s=2, l=1);
