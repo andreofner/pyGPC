@@ -221,11 +221,11 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10
 
     if infer_precision: # update precision decay
         if learn:
-            if m.initialised_slow:
+            if m.initialised_slow and m.covar_slow[l].diagonal().min() >= 1 :
                 m.covar_slow[l] = (m.covar_slow[l] - m.lr[l][3] * m.covar_slow[l]**-1).detach()  # cause state variance decay
                 m.covar_hidden_slow[l] = (m.covar_hidden_slow[l] - m.lr[l][3] * m.covar_hidden_slow[l]**-1).detach()  # hidden state variance decay
         else:
-            if m.initialised:
+            if m.initialised and m.covar[l].diagonal().min() >= 1 :
                 m.covar[l] = (m.covar[l] - m.lr[l][3] * m.covar[l]**-1).detach()  # cause state variance decay
                 m.covar_hidden[l] = (m.covar_hidden[l] - m.lr[l][3] * m.covar_hidden[l]**-1).detach()  # hidden state variance decay
 
