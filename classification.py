@@ -334,7 +334,7 @@ if __name__ == '__main__':
             batch_size = B_SIZE
             data_loader = torchvision_mnist(B_SIZE, train=True)
             DATAPOINTS = data_loader.dataset.train_data.shape[0] // batch_size  # number of datapoints
-            DATAPOINTS = 200
+            DATAPOINTS = 100
             PCN.create_states(batch_size=batch_size)
             PCN.create_covar() # create covariance
         else: # test
