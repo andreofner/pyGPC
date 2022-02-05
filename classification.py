@@ -70,13 +70,13 @@ class Model(torch.nn.Module):
         self.curr_hidden = copy.deepcopy(list(reversed(states)))  # hidden states
 
     def create_covar(self):
-        # initialise precision for inference (within datapoint)
-        self.covar = [torch.zeros(1) for _ in self.curr_cause + [None]]  # cause states precision
-        self.covar_hidden = [torch.zeros(1) for _ in self.curr_cause + [None]]  # hidden states precision
+        # precision for inference (within datapoint)
+        self.covar = [torch.zeros(1) for _ in self.curr_cause]  # cause states precision
+        self.covar_hidden = [torch.zeros(1) for _ in self.curr_cause]  # hidden states precision
 
-        # initialise precision for learning (between datapoints)
-        self.covar_slow = [torch.zeros(1) for _ in self.curr_cause + [None]]  # cause states precision
-        self.covar_hidden_slow = [torch.zeros(1) for _ in self.curr_cause + [None]]  # hidden states precision
+        # precision for learning (between datapoints)
+        self.covar_slow = [torch.zeros(1) for _ in self.curr_cause]  # cause states precision
+        self.covar_hidden_slow = [torch.zeros(1) for _ in self.curr_cause]  # hidden states precision
 
     def freeze(self, params):
         """ Stops optimisation of weights. State inference remains active. """
@@ -182,7 +182,7 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10
     higher_state = m.state(l+1)
     pred = m.layers[l].forward(higher_state)
 
-    if True and l==0: # optionally use negative log likelihood for multi-class classification
+    if True and l == 0: # optionally use negative log likelihood for multi-class classification
         target = (m.curr_cause[l].requires_grad_()).argmax(-1).squeeze()
         output = pred.reshape([batch_size, -1])
         error = torch.nn.functional.nll_loss(torch.nn.functional.log_softmax(output), target, reduction='mean')  # , reduction='mean'
@@ -191,18 +191,24 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10
         target = (m.curr_cause[l].requires_grad_())
         output = pred.reshape(target.shape)
         error = output - target  # predict lower cause
-        error = error.abs().mean(-1).unsqueeze(-1).unsqueeze(-1)
+        error = error.abs().unsqueeze(1)
+
+    # aggregate error over batch for learning
+    if learn:
+        error = error.mean(-1).sum().unsqueeze(-1)  # aggregate over batch
+    else:
+        error = error.mean(-1)  # don't aggregate over batch
 
     # initialise fast and slow cause state precision
     if not m.initialised_slow[l]:
         if m.covar_slow[l].shape[-1] <= 1:  # initialise prior cause state (co-)variance
-            m.covar_slow[l] = torch.eye(error.shape[-2]).unsqueeze(0).repeat([B_SIZE_PRECISION_SLOW, 1, 1]) * (
+            m.covar_slow[l] = torch.eye(error.shape[-1]).unsqueeze(0).repeat([B_SIZE_PRECISION_SLOW, 1, 1]) * (
                         var_prior - covar_prior) + covar_prior
         m.initialised_slow[l] = True
 
     if not m.initialised[l]:
         if m.covar[l].shape[-1] <= 1:  # initialise prior cause state (co-)variance
-            m.covar[l] = torch.eye(error.shape[-2]).unsqueeze(0).repeat([batch_size, 1, 1]) * (
+            m.covar[l] = torch.eye(error.shape[-1]).unsqueeze(0).repeat([batch_size, 1, 1]) * (
                         var_prior - covar_prior) + covar_prior
         m.initialised[l] = True
 
@@ -212,7 +218,7 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=10, covar_prior=10
         F = error * torch.matmul(m.covar[l].requires_grad_() ** -1, error)
 
     if optimize: # optimize hierarchical prediction
-        F.sum().backward()
+        F.backward(gradient=torch.ones_like(F))
         m.mask_state_grads(l+1, split=CAUSE_SPLIT, cause=True)  # part of cause states used for outgoing prediction
         m.mask_state_grads(l+1, split=HIDDEN_SPLIT)  # part of hidden states used for outgoing prediction
         m.mask_weights_grads(l+1)
@@ -300,9 +306,9 @@ def batch_accuracy(pred_g, target, batch_size):
 
 
 """ Network settings"""
-UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 100, 256, 1024, 10  # model updates, batch size, input size
+UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 100, 1024, 1024, 10  # model updates, batch size, input size
 CONVERGED_INFER = .1  # prediction error threshold to stop inference
-SIZES = [10, 64, 64, 28*28]  # (output size, input size) per layer
+SIZES = [10, 256, 256, 28*28]  # (output size, input size) per layer
 CAUSE_SPLIT, HIDDEN_SPLIT = 1, 0 # causes & hidden states used for outgoing prediction
 PREDICT_FIRST = False # propagate prediction through entire network before computing errors
 PRECISION = True  # estimate fast (inference, within datapoint) and slow precision (learning, between datapoint)
@@ -310,21 +316,21 @@ PRECISION = True  # estimate fast (inference, within datapoint) and slow precisi
 """ Experiment settings"""
 TEST_TARGET = False  # test dataset: reconstruct target given input (generative setting)
 TEST_INPUT = True  # test dataset: reconstruct input given target (discriminative setting)
-DM_THRESHOLD = .1  # allowed error fluctuation for delayed updates (see nature.com/articles/s42003-021-02994-2)
+DM_THRESHOLD = 1  # allowed error fluctuation for delayed updates (see nature.com/articles/s42003-021-02994-2)
 
 """ Plot & Print settings"""
-SUMMARY = True
+SUMMARY = False
 PLOT = True
 
 def run():
     PCN = Model(SIZES,
                 act=torch.nn.Identity(),  # activation function of hierarchical weights
-                lr_sh=[1 for i in range(len(SIZES)-2)]+[0],  # higher state learning rate
-                lr_sl=[0] + [1 for i in range(len(SIZES))],  # state learning rate
-                lr_w=[0.0001 for i in range(len(SIZES))],  # hierarchical weights learning rate
-                lr_w_d=[0 for i in range(len(SIZES))],  # dynamical weights learning rate
-                lr_p=[.01 for i in range(len(SIZES))],  # hierarchical & dynamical precision learning rate    --> this learning rate should be roughly 10% of the currently inferred variance --> so that precise measure change slowly and unprecise measures change more quickly.. tempoerature param..
-                sr=[1 for i in range(14)])  # sampling interval (skipped observations in lower layer)
+                lr_sh=[1 for _ in range(len(SIZES)-2)]+[0],  # higher state learning rate
+                lr_sl=[0] + [.01 for _ in range(len(SIZES))],  # state learning rate
+                lr_w=[0.001 for _ in range(len(SIZES))],  # hierarchical weights learning rate
+                lr_w_d=[0 for _ in range(len(SIZES))],  # dynamical weights learning rate
+                lr_p=[.1 for _ in range(len(SIZES))],  # hierarchical & dynamical precision learning rate
+                sr=[1 for _ in range(14)])  # sampling interval (skipped observations in lower layer)
 
     results = []
 
@@ -334,13 +340,14 @@ def run():
             batch_size = B_SIZE
             data_loader = torchvision_mnist(B_SIZE, train=True)
             DATAPOINTS = data_loader.dataset.train_data.shape[0] // batch_size  # number of datapoints
-            DATAPOINTS = 10 # 200
+            DATAPOINTS = 100 # 200
             PCN.create_states(batch_size=batch_size)
             PCN.create_covar() # create covariance
         else: # test
             batch_size = B_SIZE_TEST
             data_loader = torchvision_mnist(B_SIZE_TEST, train=False)
             DATAPOINTS = 1
+            PCN.initialised = [False for _ in PCN.initialised]
             PCN.create_states(batch_size=batch_size)
 
         # create and initialise states and learning rates
@@ -350,6 +357,8 @@ def run():
             print("Layers:", PCN.layers)
             print("Cause states :", [list(c.shape) for c in PCN.curr_cause])
             print("Hidden states:", [list(c.shape) for c in PCN.curr_hidden])
+            print("Covariance learning:", [list(c.shape) for c in PCN.covar_slow])
+            print("Covariance inference:", [list(c.shape) for c in PCN.covar])
 
         # set up delayed learning
         if DM_THRESHOLD is not None:
@@ -365,7 +374,7 @@ def run():
 
             """ select how much to log and visualize """
             if a_id == 0:
-                [err_h, err_t, preds_h, preds_t, preds_g, cause_l0, preds_gt], inputs = [[[] for _ in PCN.layers] for _ in range(7)], [[]]
+                [err_h, preds_h, preds_g, cause_l0, preds_gt], inputs = [[[] for _ in PCN.layers] for _ in range(5)], [[]]
                 variances_slow, datapoints, total_updates = None, [], 0
                 raw_errors, precisions, precisions_slow, precisions_hidden_slow, precisions_hidden = [[[] for _ in PCN.layers] for _ in range(5)]
 
@@ -385,8 +394,6 @@ def run():
                 if e_h_prior <= lowest_error + DM_THRESHOLD and not is_nan:  # keep improved weights todo running average? todo threshold/precision weighting
                     lowest_error = e_h_prior
                     last_PCN = copy.deepcopy(PCN)
-                    PCN.covar_slow = [v.clone().detach().requires_grad_() for v in PCN.covar] # set slow precision to fast precision if prior prediction improved
-                    PCN.covar_hidden_slow = [v.detach().requires_grad_() for v in PCN.covar_hidden]
                 else: # reject last weights update
                     PCN = last_PCN
 
@@ -470,9 +477,10 @@ def run():
             except:
                 pass
 
-    if SUMMARY:
+    if True:
         table(data=np.array([[r.round(decimals=1) for r in results]]),
               rows=[str(len(PCN.layers))+" layer PCN"], columns=["Train Accuracy", "Test Accuracy"], print_latex=False)
+    return PCN
 
 if __name__ == '__main__':
-    run()
+    PCN = run()
