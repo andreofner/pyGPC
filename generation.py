@@ -336,9 +336,9 @@ def batch_accuracy(pred_g, target, batch_size):
 
 
 """ Network settings"""
-UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 10, 64, 64, 28*28  # model updates, batch size, input size
+UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 100, 64, 64, 28*28  # model updates, batch size, input size
 CONVERGED_INFER = 1.1  # prediction error threshold to stop inference
-SIZES = [28*28, 256,256, 128,128, 64,64, 10]  # (output size, input size) per layer
+SIZES = [28*28, 256,256, 10]  # (output size, input size) per layer
 CAUSE_SPLIT, HIDDEN_SPLIT = 1, 0  # percentage of causes & hidden states used for outgoing prediction
 PREDICT_FIRST = True  # propagate prediction through entire network before computing errors
 PRECISION = True  # estimate fast (inference, within datapoint) and slow precision (learning, between datapoint)
@@ -356,10 +356,10 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50, results=[]):
     if PCN is None:
         PCN = Model(SIZES, act=torch.nn.Identity(),  # activation function of hierarchical weights
                     lr_sh=[.01 for _ in range(len(SIZES)-2)]+[0],  # higher state learning rate
-                    lr_sl=[0] + [0 for _ in range(len(SIZES))],  # state learning rate
+                    lr_sl=[0] + [.01 for _ in range(len(SIZES))],  # state learning rate
                     lr_w=[0.00001 for _ in range(len(SIZES))],  # hierarchical weights learning rate
                     lr_w_d=[0 for _ in range(len(SIZES))],  # dynamical weights learning rate
-                    lr_p=[0.0001 for _ in range(len(SIZES))],  # hierarchical & dynamical precision learning rate
+                    lr_p=[0.1 for _ in range(len(SIZES))],  # hierarchical & dynamical precision learning rate
                     sr=[1 for _ in range(14)])  # sampling interval (skipped observations in lower layer)
 
     if test:
@@ -499,7 +499,7 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50, results=[]):
 
 if __name__ == '__main__':
     # train
-    PCN, input, target, pred_g = run(UPDATES=UPDATES, DATAPOINTS=100, PCN=None, test=False)
+    PCN, input, target, pred_g = run(UPDATES=UPDATES, DATAPOINTS=10, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
     visualize_multilayer_generation(PCN, input, target, title="Hierarchical prediction (train set)")
 
     # test
@@ -510,7 +510,7 @@ if __name__ == '__main__':
         PCN.lr[l][2] = 0  # learning rate hierarchical weights
         PCN.lr[l][3] = 0.1  # learning rate precision
         PCN.lr[l][4] = 0  # learning rate dynamical weights
-    PCN, input, target, _ = run(UPDATES=1000, PCN=PCN, test=True) # 300
+    PCN, input, target, _ = run(UPDATES=300, PCN=PCN, test=True) # 10-100 updates are enough to see meaningful results
     print("Test accuracy:", batch_accuracy(PCN.curr_cause[-1], target, B_SIZE_TEST)[0])
     visualize_multilayer_generation(PCN, input, target, title="Hierarchical prediction (test set)")
 
