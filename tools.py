@@ -14,8 +14,7 @@ import matplotlib.pyplot as plt
 import torchvision
 from moviepy.editor import ImageSequenceClip
 from gym.envs.registration import register as gym_register
-from GPC import B_SIZE, IMAGE_SIZE
-from generation import predict
+from generation import B_SIZE, IMAGE_SIZE, predict
 import pandas as pd
 
 IMG_NOISE = 0.0  # gaussian noise on inputs
