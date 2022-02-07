@@ -1,4 +1,5 @@
 ![alt Overview](https://github.com/andreofner/pyGPC/blob/master/summary.drawio.png)
+![alt Overview](https://github.com/andreofner/pyGPC/blob/master/dynamic_details.png)
 
 ## Simultaneous generation and classification with a static model
 ![alt Overview](https://github.com/andreofner/pyGPC/blob/master/hierarchical_generation_train.png)
