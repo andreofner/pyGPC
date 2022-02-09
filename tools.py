@@ -19,6 +19,46 @@ import pandas as pd
 
 IMG_NOISE = 0.0  # gaussian noise on inputs
 
+
+def visualize_precision(PCN):
+    covar = PCN.covar[0].detach()[:1] ** -1
+    var = torch.diagonal(covar[0])
+    input = PCN.curr_cause[0].detach()[:1]
+    input_ones = torch.ones_like(PCN.curr_cause[0].detach()[:1])
+    prediction = predict(PCN, l=0, keep_states=True)[0]
+    error = (input.squeeze() - prediction).abs()
+    covar_error = torch.matmul(covar, error.squeeze().unsqueeze(-1))
+    var_error = var.squeeze() * error.squeeze()
+
+    fig, axs = plt.subplots(2, 2)
+    ax = axs[0, 0]
+    clb = ax.imshow(prediction.reshape([28, 28]))
+    fig.colorbar(clb, ax=ax);
+    ax.set_title("Prediction")
+
+    ax = axs[0, 1]
+    clb = ax.imshow(error.reshape([28, 28]))
+    fig.colorbar(clb, ax=ax);
+    ax.set_title("Prediction error")
+
+    ax = axs[1, 0]
+    clb = ax.imshow(covar_error.reshape([28, 28]))
+    fig.colorbar(clb, ax=ax);
+    ax.set_title("Precision weighted error\nUsing covariance")
+
+    ax = axs[1, 1]
+    clb = ax.imshow(var_error.reshape([28, 28]))
+    fig.colorbar(clb, ax=ax);
+    ax.set_title("Precision weighted error\nUsing variance")
+
+    for a1 in axs:
+        for a2 in a1:
+            a2.set_xticks([]);
+            a2.set_yticks([])
+    plt.suptitle("Implicit attention: Precision weighted prediction errors")
+    plt.tight_layout()
+    plt.show()
+
 def visualize_multilayer_generation(PCN, input, target, examples=6, show_class_pred=True, title="Hierarchical prediction"):
     prediction_l0 = predict(PCN, l=0, keep_states=True)
     prediction_l1 = predict(PCN, l=1, keep_states=True)
@@ -26,32 +66,26 @@ def visualize_multilayer_generation(PCN, input, target, examples=6, show_class_p
         prediction_l2 = predict(PCN, l=2, keep_states=True)
     except:
         prediction_l2 = prediction_l1*0
-    try:
-        prediction_l3 = predict(PCN, l=3, keep_states=True)
-    except:
-        prediction_l3 = prediction_l2*0
     if show_class_pred:
         predicted_class = PCN.curr_cause[-1].argmax(-1).detach().numpy()
         target = target.detach().numpy()
 
-    fig, axs = plt.subplots(nrows=5, ncols=examples+1, figsize=(8, 6), subplot_kw={'xticks': [], 'yticks': []})
-    for ax, img1, img2, img3, img4, img5, pred_class, true_class in zip(axs.T[1:], input, prediction_l3, prediction_l2, prediction_l1, prediction_l0, predicted_class, target):
-        ax[0].imshow(img2.reshape([28,28]))
-        ax[1].imshow(img3.reshape([28,28]))
-        ax[2].imshow(img4.reshape([28,28]))
-        ax[3].imshow(img5.reshape([28,28]))
-        ax[4].imshow(img1.reshape([28,28]))
+    fig, axs = plt.subplots(nrows=4, ncols=examples+1, subplot_kw={'xticks': [], 'yticks': []})
+    for ax, img1, img3, img4, img5, pred_class, true_class in zip(axs.T[1:], input, prediction_l2, prediction_l1, prediction_l0, predicted_class, target):
+        ax[0].imshow(img3.reshape([28,28]))
+        ax[1].imshow(img4.reshape([28,28]))
+        ax[2].imshow(img5.reshape([28,28]))
+        ax[3].imshow(img1.reshape([28,28]))
         if predicted_class is not None:
               ax[0].text(0.5, 1.2, str(pred_class[0]), horizontalalignment='center',
                              verticalalignment='center', transform=ax[0].transAxes)
-              ax[4].text(0.5, -0.2, str(true_class), horizontalalignment='center', verticalalignment='center',
-                             transform=ax[4].transAxes)
+              ax[3].text(0.5, -0.2, str(true_class), horizontalalignment='center', verticalalignment='center',
+                             transform=ax[3].transAxes)
 
-    axs[0][0].text(0.5, 0.5, "Layer 4", horizontalalignment='center', verticalalignment='center', transform=axs[0][0].transAxes); axs[0][0].axis('off')
-    axs[1][0].text(0.5, 0.5, "Layer 3", horizontalalignment='center', verticalalignment='center', transform=axs[1][0].transAxes); axs[1][0].axis('off')
-    axs[2][0].text(0.5, 0.5, "Layer 2", horizontalalignment='center', verticalalignment='center', transform=axs[2][0].transAxes); axs[2][0].axis('off')
-    axs[3][0].text(0.5, 0.5, "Layer 1", horizontalalignment='center', verticalalignment='center', transform=axs[3][0].transAxes); axs[3][0].axis('off')
-    axs[4][0].text(0.5, 0.5, "Input", horizontalalignment='center', verticalalignment='center', transform=axs[4][0].transAxes); axs[4][0].axis('off')
+    axs[0][0].text(0.5, 0.5, "Layer 3", horizontalalignment='center', verticalalignment='center', transform=axs[0][0].transAxes); axs[0][0].axis('off')
+    axs[1][0].text(0.5, 0.5, "Layer 2", horizontalalignment='center', verticalalignment='center', transform=axs[1][0].transAxes); axs[1][0].axis('off')
+    axs[2][0].text(0.5, 0.5, "Layer 1", horizontalalignment='center', verticalalignment='center', transform=axs[2][0].transAxes); axs[2][0].axis('off')
+    axs[3][0].text(0.5, 0.5, "Input", horizontalalignment='center', verticalalignment='center', transform=axs[3][0].transAxes); axs[3][0].axis('off')
 
     axs[0][0].text(0.5, 1.1, "Prediction ", horizontalalignment='center', verticalalignment='center',
                transform=axs[0][0].transAxes)
@@ -59,6 +93,7 @@ def visualize_multilayer_generation(PCN, input, target, examples=6, show_class_p
                transform=axs[-1][0].transAxes)
 
     plt.suptitle(title)
+    plt.tight_layout
     plt.show()
     plt.close()
 
