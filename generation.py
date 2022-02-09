@@ -498,11 +498,16 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
     return PCN, input, target, pred_g
 
 if __name__ == '__main__':
-    # train
+    """ Train """
+    # train weights on <DATAPOINTS> batches. <UPDATES> inference steps per DATAPOINTS.
+    # each inference step refines a) the prior prediction and b) the estimated cause state for the current batch
     PCN, input, target, pred_g = run(UPDATES=20, DATAPOINTS=100, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
     visualize_multilayer_generation(PCN, input, target, title="Hierarchical prediction (train set)")
 
-    # test
+    """ Test """
+    #  <UPDATES> inference steps on a single batch
+    # the classification accuracy increases with increasing <UPDATES>
+    # when high accuracy classification or prediction is relevant, set a high value <UPDATES> and stop when converged, e.g. precision=1
     PCN = initialise(PCN, test=True)
     for l, _ in enumerate(PCN.layers):
         PCN.lr[l][0] = 1 # learning rate higher state
