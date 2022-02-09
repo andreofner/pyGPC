@@ -1,7 +1,6 @@
 """
 Differentiable Generalized Predictive Coding
 André Ofner 2021
-
 MNIST classification with a static predictive coding model
 """
 
@@ -193,22 +192,23 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=2, covar_prior=100
 
     error += 1 # keeps error from getting too small from squaring
 
-    # aggregate error over batch for learning
-    if learn:
-        error = error.mean(-1).sum().unsqueeze(-1)  # aggregate over batch
+    if learn and not infer_precision:
+        error = error.sum().unsqueeze(-1)  # aggregate over batch
+    elif learn and not infer_precision:
+        error = error.sum().unsqueeze(-1)  # aggregate over batch
     else:
-        error = error.squeeze().mean(-1).unsqueeze(-1)#.mean(-1)  # don't aggregate over batch
+        error = error.squeeze().mean(-1).unsqueeze(-1).unsqueeze(-1) # don't aggregate over batch
 
     # initialise fast and slow cause state precision
-    if not m.initialised_slow[l]:
+    if not m.initialised_slow[l] and learn:
         if m.covar_slow[l].shape[-1] <= 1:  # initialise prior cause state (co-)variance
             m.covar_slow[l] = torch.eye(error.shape[-1]).unsqueeze(0).repeat([B_SIZE_PRECISION_SLOW, 1, 1]) * (
                         var_prior - covar_prior) + covar_prior
         m.initialised_slow[l] = True
 
-    if not m.initialised[l]:
+    if not m.initialised[l] and not learn:
         if m.covar[l].shape[-1] <= 1:  # initialise prior cause state (co-)variance
-            m.covar[l] = torch.eye(error.shape[-2]).repeat([batch_size, 1, 1]) * (
+            m.covar[l] = torch.eye(error.shape[-1]).repeat([batch_size, 1, 1]) * (
                         var_prior - covar_prior) + covar_prior
         m.initialised[l] = True
 
@@ -334,11 +334,10 @@ def batch_accuracy(pred_g, target, batch_size):
     return accuracy, pred_classes, correct
 
 
-
 """ Network settings"""
-UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 100, 64, 64, 28*28  # model updates, batch size, input size
+UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 100, 128, 128, 28*28  # model updates, batch size, input size
 CONVERGED_INFER = 1.1  # prediction error threshold to stop inference
-SIZES = [28*28, 256,256, 10]  # (output size, input size) per layer
+SIZES = [28*28, 256,256, 128,128, 10]  # (output size, input size) per layer
 CAUSE_SPLIT, HIDDEN_SPLIT = 1, 0  # percentage of causes & hidden states used for outgoing prediction
 PREDICT_FIRST = True  # propagate prediction through entire network before computing errors
 PRECISION = True  # estimate fast (inference, within datapoint) and slow precision (learning, between datapoint)
@@ -352,14 +351,14 @@ DM_THRESHOLD = None  # allowed error fluctuation for delayed updates (see nature
 SUMMARY = True
 PLOT = True
 
-def run(UPDATES, PCN=None, test=False, DATAPOINTS=50, results=[]):
+def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
     if PCN is None:
         PCN = Model(SIZES, act=torch.nn.Identity(),  # activation function of hierarchical weights
-                    lr_sh=[.01 for _ in range(len(SIZES)-2)]+[0],  # higher state learning rate
-                    lr_sl=[0] + [.01 for _ in range(len(SIZES))],  # state learning rate
-                    lr_w=[0.00001 for _ in range(len(SIZES))],  # hierarchical weights learning rate
+                    lr_sh=[10 for _ in range(len(SIZES)-2)]+[0],  # higher state learning rate
+                    lr_sl=[0] + [1 for _ in range(len(SIZES))],  # state learning rate
+                    lr_w=[.01 for _ in range(len(SIZES))],  # hierarchical weights learning rate
                     lr_w_d=[0 for _ in range(len(SIZES))],  # dynamical weights learning rate
-                    lr_p=[0.1 for _ in range(len(SIZES))],  # hierarchical & dynamical precision learning rate
+                    lr_p=[.01 for _ in range(len(SIZES))],  # hierarchical & dynamical precision learning rate
                     sr=[1 for _ in range(14)])  # sampling interval (skipped observations in lower layer)
 
     if test:
@@ -434,6 +433,7 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50, results=[]):
         if PRECISION:
             PCN.covar = [(PCN.covar[l]*0 + v).detach().requires_grad_() for l,v in enumerate(PCN.covar_slow)]
             PCN.covar_hidden = [(PCN.covar_hidden[l]*0 + v).detach().requires_grad_() for l,v in enumerate(PCN.covar_hidden_slow)]
+            #PCN.initialised = [False for _ in PCN.layers] # ignore learned precision
 
         """ Optionally predict through entire network first. """
         if PREDICT_FIRST:
@@ -483,7 +483,7 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50, results=[]):
                             plot_batch(d, title=str(env_name) + n, targets=target, predictions=torch.tensor(pred_classes))
                     datapoints.append(total_updates)
 
-                    print(a_id + 1, "|", DATAPOINTS, "\t Update", update + 1, "|", UPDATES)
+                    print(a_id + 1, "|", DATAPOINTS, "\t Update", update + 1, "|", UPDATES, "Error", e_h[0].mean().detach().numpy().round(3))
 
     if PLOT and env_id == 0:
 
@@ -499,18 +499,19 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50, results=[]):
 
 if __name__ == '__main__':
     # train
-    PCN, input, target, pred_g = run(UPDATES=UPDATES, DATAPOINTS=10, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
+    PCN, input, target, pred_g = run(UPDATES=20, DATAPOINTS=100, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
     visualize_multilayer_generation(PCN, input, target, title="Hierarchical prediction (train set)")
 
     # test
     PCN = initialise(PCN, test=True)
     for l, _ in enumerate(PCN.layers):
-        PCN.lr[l][0] = 0.001  # learning rate higher state
-        PCN.lr[l][1] = 0.001  # learning rate lower state
+        PCN.lr[l][0] = 1 # learning rate higher state
+        PCN.lr[l][1] = 1 # learning rate lower state
         PCN.lr[l][2] = 0  # learning rate hierarchical weights
-        PCN.lr[l][3] = 0.1  # learning rate precision
+        PCN.lr[l][3] = .01  # learning rate precision
         PCN.lr[l][4] = 0  # learning rate dynamical weights
     PCN, input, target, _ = run(UPDATES=300, PCN=PCN, test=True) # 10-100 updates are enough to see meaningful results
     print("Test accuracy:", batch_accuracy(PCN.curr_cause[-1], target, B_SIZE_TEST)[0])
     visualize_multilayer_generation(PCN, input, target, title="Hierarchical prediction (test set)")
 
+    #visualize_precision(PCN)
