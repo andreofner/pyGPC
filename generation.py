@@ -3,6 +3,7 @@ Differentiable Generalized Predictive Coding
 André Ofner 2021
 MNIST classification with a static predictive coding model
 """
+import matplotlib.pyplot as plt
 
 from tools import *
 import torch.nn.init
@@ -151,7 +152,9 @@ def predict(m, l, keep_states=True, keep_cause=None, keep_hidden=None):
             m.curr_hidden = keep_hidden
         return input_prediction
 
-def GPC(m, l, infer_precision=False, optimize=True, var_prior=2, covar_prior=10000000, transition=False, learn=False):
+def GPC(m, l, infer_precision=False, optimize=True,
+        var_prior=2, covar_prior=10000000, transition=False, learn=False,
+        full_covar=False):
     """ Layer-wise Generalized Predictive Coding optimizer """
 
     batch_size = m.state(l).shape[0]
@@ -190,14 +193,17 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=2, covar_prior=100
         error = output - target  # predict lower cause
         error = error.abs().unsqueeze(1)
 
-    error += 1 # keeps error from getting too small from squaring
+    error += 1  # keeps error from getting too small from squaring
 
     if learn and not infer_precision:
         error = error.sum().unsqueeze(-1)  # aggregate over batch
     elif learn and not infer_precision:
         error = error.sum().unsqueeze(-1)  # aggregate over batch
     else:
-        error = error.squeeze().mean(-1).unsqueeze(-1).unsqueeze(-1) # don't aggregate over batch
+        if full_covar:  # estimate variance and covariance
+            error = error.squeeze() # don't aggregate over batch
+        else:  # estimate only variance
+            error = error.squeeze().mean(-1).unsqueeze(-1).unsqueeze(-1) # don't aggregate over batch
 
     # initialise fast and slow cause state precision
     if not m.initialised_slow[l] and learn:
@@ -212,12 +218,16 @@ def GPC(m, l, infer_precision=False, optimize=True, var_prior=2, covar_prior=100
                         var_prior - covar_prior) + covar_prior
         m.initialised[l] = True
 
-    #print("l", l, "err", error.shape, "cov slow", m.covar_slow[l].shape, "cov", m.covar[l].shape)
+    if False:
+        print("l", l, "err", error.shape, "cov slow", m.covar_slow[l].shape, "cov", m.covar[l].shape)
 
     if learn:
         F = error * torch.matmul(m.covar_slow[l].requires_grad_() ** -1, error)
     else:
-        F = error * torch.matmul(m.covar[l].requires_grad_() ** -1, error)
+        if full_covar:
+            F = error.unsqueeze(-1) * torch.matmul(m.covar[l].requires_grad_() ** -1, error.unsqueeze(-1))
+        else:
+            F = error * torch.matmul(m.covar[l].requires_grad_() ** -1, error)
 
     if optimize: # optimize hierarchical prediction
         F.backward(gradient=torch.ones_like(F))
@@ -415,7 +425,7 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
             feed_target(PCN, batch_size=batch_size, target=target, test=env_id>0)
             pred_g_prior = predict(PCN, l=len(PCN.layers)-1, keep_states=True)
             feed_observation(PCN, batch_size=batch_size, input=input, test=env_id > 0)
-            _, e_h_prior, _ = GPC(PCN, l=0, infer_precision=True, optimize=False, transition=False, learn=False)
+            _, e_h_prior, _ = GPC(PCN, l=0, infer_precision=True, optimize=False, transition=False, learn=False, full_covar=test)
             #accuracy_prior, pred_classes_prior, correct_prior = batch_accuracy(PCN.curr_cause[-1], target, batch_size=batch_size)
 
         if DM_THRESHOLD is not None:  # switch on delayed updates of weights
@@ -430,7 +440,7 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
                 PCN = last_PCN
 
         """ Initialise fast precision with learned precision prior """
-        if PRECISION:
+        if PRECISION and not test:  # during testing, we might have different covar shapes
             PCN.covar = [(PCN.covar[l]*0 + v).detach().requires_grad_() for l,v in enumerate(PCN.covar_slow)]
             PCN.covar_hidden = [(PCN.covar_hidden[l]*0 + v).detach().requires_grad_() for l,v in enumerate(PCN.covar_hidden_slow)]
             #PCN.initialised = [False for _ in PCN.layers] # ignore learned precision
@@ -453,11 +463,12 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
             for l_h in reversed(range(len(PCN.layers))): # todo
 
                 # inference: states & fast precision
-                if PRECISION: GPC(PCN, l=l_h, infer_precision=True)  # update fast precision (inference, within datapoint)
-                p_h, e_h, p_t = GPC(PCN, l=l_h, transition=False) # (l_h > 0 )  # step hierarchical variables
+                if PRECISION: GPC(PCN, l=l_h, infer_precision=True, full_covar=test)  # update fast precision (inference, within datapoint)
+                p_h, e_h, p_t = GPC(PCN, l=l_h, transition=False, full_covar=test) # (l_h > 0 )  # step hierarchical variables
 
                 # learning: update slow precision and weights
-                if PRECISION and update == 0: GPC(PCN, l=l_h, infer_precision=True, learn=True)
+                if PRECISION and update == 0 and not test:
+                    GPC(PCN, l=l_h, infer_precision=True, learn=True, full_covar=test)
 
                 # log precision and error at selected layer
                 precisions[l_h].append(np.diag(np.array(PCN.covar[l_h].mean(dim=0).detach())).mean())
@@ -498,8 +509,15 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
     return PCN, input, target, pred_g
 
 if __name__ == '__main__':
+
+    """
+    Train a static predictive coding model on MNIST
+    During training only the mean of the variance is estimated for each batch element
+    """
+
+
     """ Train """
-    # train weights on <DATAPOINTS> batches. computes <UPDATES> inference steps per batch
+    # train weights on <DATAPOINTS> batches. <UPDATES> inference steps per DATAPOINTS.
     # each inference step refines a) the prior prediction and b) the estimated cause state for the current batch
     PCN, input, target, pred_g = run(UPDATES=20, DATAPOINTS=100, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
     visualize_multilayer_generation(PCN, input, target, title="Hierarchical prediction (train set)")
@@ -509,14 +527,26 @@ if __name__ == '__main__':
     # the classification accuracy increases with increasing <UPDATES>
     # when high accuracy classification or prediction is relevant, set a high value <UPDATES> and stop when converged, e.g. precision=1
     PCN = initialise(PCN, test=True)
+
+    # manually initialise inference precision 
+    for l,_ in enumerate(PCN.layers):
+        PCN.covar[l] = torch.eye(PCN.curr_cause[l].shape[-1]).repeat([B_SIZE_TEST, 1, 1]) * (1 - 1000) + 1000
+    PCN.initialised = [True for _ in PCN.layers]
+
     for l, _ in enumerate(PCN.layers):
-        PCN.lr[l][0] = 1 # learning rate higher state
-        PCN.lr[l][1] = 1 # learning rate lower state
+        PCN.lr[l][0] = .01  # learning rate higher state
+        PCN.lr[l][1] = .01  # learning rate lower state
         PCN.lr[l][2] = 0  # learning rate hierarchical weights
-        PCN.lr[l][3] = .01  # learning rate precision
+        PCN.lr[l][3] = .1  # learning rate precision
         PCN.lr[l][4] = 0  # learning rate dynamical weights
-    PCN, input, target, _ = run(UPDATES=300, PCN=PCN, test=True) # 10-100 updates are enough to see meaningful results
+    PCN, input, target, _ = run(UPDATES=10, PCN=PCN, test=True) # 10-100 updates are enough to see meaningful results
     print("Test accuracy:", batch_accuracy(PCN.curr_cause[-1], target, B_SIZE_TEST)[0])
     visualize_multilayer_generation(PCN, input, target, title="Hierarchical prediction (test set)")
 
-    #visualize_precision(PCN)
+    for example in range(1):
+        visualize_precision(PCN, batch_id=example)
+
+    # visualize the covariance matrix (inverse of precision) of the first layer
+    plt.imshow(PCN.covar[0][example].detach().reshape([28*28,28*28])**-1)
+    plt.colorbar()
+    plt.show()
