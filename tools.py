@@ -20,15 +20,24 @@ import pandas as pd
 IMG_NOISE = 0.0  # gaussian noise on inputs
 
 
-def visualize_precision(PCN):
-    covar = PCN.covar[0].detach()[:1] ** -1
+def visualize_precision(PCN, batch_id=0, input_projection=False, zero_var_covar=False):
+    covar = PCN.covar[0].detach()[batch_id:batch_id+1] ** -1
     var = torch.diagonal(covar[0])
-    input = PCN.curr_cause[0].detach()[:1]
-    input_ones = torch.ones_like(PCN.curr_cause[0].detach()[:1])
-    prediction = predict(PCN, l=0, keep_states=True)[0]
+
+    if zero_var_covar:
+        covar = covar * (1 - torch.eye(PCN.covar[0].shape[-1], PCN.covar[0].shape[-2])) + (torch.eye(PCN.covar[0].shape[-1], PCN.covar[0].shape[-2]))
+
+    input = PCN.curr_cause[0].detach()[batch_id:batch_id+1]
+    prediction = predict(PCN, l=0, keep_states=True)[batch_id]
     error = (input.squeeze() - prediction).abs()
-    covar_error = torch.matmul(covar, error.squeeze().unsqueeze(-1))
-    var_error = var.squeeze() * error.squeeze()
+
+    if input_projection:
+        covar_error = torch.matmul(covar, error.squeeze().unsqueeze(-1))
+        var_error = var.squeeze() * error.squeeze()
+    else:
+        input_ones = torch.ones_like(input)
+        covar_error = torch.matmul(covar, input_ones.squeeze().unsqueeze(-1))
+        var_error = var.squeeze() * input_ones.squeeze()
 
     fig, axs = plt.subplots(2, 2)
     ax = axs[0, 0]
@@ -44,19 +53,21 @@ def visualize_precision(PCN):
     ax = axs[1, 0]
     clb = ax.imshow(covar_error.reshape([28, 28]))
     fig.colorbar(clb, ax=ax);
-    ax.set_title("Precision weighted error\nUsing covariance")
+    ax.set_title("Precision\n(Variance and covariance)")
 
     ax = axs[1, 1]
     clb = ax.imshow(var_error.reshape([28, 28]))
     fig.colorbar(clb, ax=ax);
-    ax.set_title("Precision weighted error\nUsing variance")
+    ax.set_title("Precision\n(Variance)")
 
     for a1 in axs:
         for a2 in a1:
             a2.set_xticks([]);
             a2.set_yticks([])
-    plt.suptitle("Implicit attention: Precision weighted prediction errors")
+    plt.suptitle("Implicit attention: Prediction error precision")
     plt.tight_layout()
+
+    plt.savefig("./precision.png")
     plt.show()
 
 def visualize_multilayer_generation(PCN, input, target, examples=6, show_class_pred=True, title="Hierarchical prediction"):
