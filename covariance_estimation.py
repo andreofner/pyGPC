@@ -1,6 +1,6 @@
 """
-Demonstration of variance and covariance estimation from samples
-- Maximum Likelihood estimates versus Gradient Descent on weighted prediction errors
+Demonstration of variance and covariance estimation from samples:
+Maximum Likelihood estimates compared to Gradient Descent on weighted prediction errors
 """
 
 import torch
@@ -8,11 +8,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 plt.style.use(['seaborn'])
 
-# variance and noise settings
 np.random.seed(1)
 SAMPLES = 1000  # number of observations
-MOD = 3  # scales variance of observation mean
-random_scale = .1  # scales additive gaussian noise on observation mean
+
+def generate_data(i, MOD=16, random_scale=0.):
+    """ generative some data with constant variance and add random noise """
+    ins[0, 0] = (i % MOD) * 1 + np.random.normal(0, random_scale)
+    ins[0, 1] = ins[0, 0] * 2 + +10 + np.random.normal(0, random_scale)
+    ins[0, 2] = -ins[0, 0] * 3 + np.random.normal(0, random_scale)
+    return ins
 
 def ML_covar(sigma, x, x_mean, N):
     """ Updates ML covariance estimate given new observation and estimated mean"""
@@ -36,7 +40,7 @@ def plot_covariance(observations, est_means, est_covars, method="\nMaximum Likel
         ax.grid("both")
     ax.set_xlabel("Update");
     plt.suptitle("Covariance estimation: "+str(method))
-    clb = axes[-1].imshow(est_covars[-1]) #**-1
+    clb = axes[-1].imshow(est_covars[-1])#, vmin=0, vmax=10)
     axes[-1].set_xlabel("Estimated\nCovariance")
     axes[-1].set_yticks([]); axes[-1].set_xticks([])
     plt.tight_layout()
@@ -46,82 +50,82 @@ def plot_covariance(observations, est_means, est_covars, method="\nMaximum Likel
 
 
 """ Estimate mean and variance using Gradient Descent on precision weighted prediction errors"""
-
-# learning rates
-LR_sigma = .01  # covariance estimation
-
-# initialise variables
+LR_sigma = .1  # covariance learning rate
 ins = torch.zeros((1,3))
-sigma = torch.ones((1,3,3)) * 1  # prior covariances
+
+# initialise variance estimate
+sigma = torch.ones((1,3,3)) * 1000  # prior covariances
 means = torch.zeros((1, 3))
 for i in range(sigma.shape[-1]): sigma[:,i,i] = .1  # prior variances
+
+# initialise covariance estimate
+co_sigma = torch.ones((1,3,3)) * 1  # prior covariances
+
 observations, errors, est_covars, est_means = [], [], [], []
+sigma.requires_grad_();  # make sure gradients are computed
+opt_sigma = torch.optim.SGD([sigma, co_sigma], lr=LR_sigma)  # optimizer for covariance
 
 for i in range(SAMPLES):
-    # generative some data with constant variance and add random noise
-    ins[0, 0] = (i % MOD) + 0.5 + np.random.normal(0, random_scale)
-    ins[0, 1] = -ins[0, 0] + np.random.normal(0, random_scale)
-    ins[0, 2] = -ins[0, 0] * 0.5 - 2 + np.random.normal(0, random_scale)
+    ins = generate_data(i)
 
-    # initialise gradient optimization
     sigma.requires_grad_(); # make sure gradients are computed
-    opt_sigma = torch.optim.SGD([sigma], lr=LR_sigma)  # optimizer for covariance
+    co_sigma.requires_grad_(); # make sure gradients are computed
     opt_sigma.zero_grad() # set gradients to zero
 
-    """ update the mean estimate """
+    """ update mean estimate """
     means, mean_weighted = ML_mean(means, ins, i)
 
-    """ update the covariance estimate """
-    # precision (inverse error covariance) weighted prediction error
-    # PWPE = error.T * precision * error
+    """ update covariance estimate """
+    # precision (inverse error covariance) weighted prediction error = error.T * precision * error
     error_weighted = torch.matmul((ins-mean_weighted)[0].T, torch.matmul(sigma[0]**-1, (ins-mean_weighted)[0]))
-    error_weighted.backward() # compute the gradients
+    error_weighted.backward()  # compute the gradients for variance
+
+    error_weighted = torch.matmul((ins-mean_weighted)[0].T, torch.matmul(co_sigma[0]**-1, (ins-mean_weighted)[0]))
+    error_weighted.backward()  # compute the gradients for covariance
+
     if i > 20:  # wait until mean is estimated
         opt_sigma.step() # update covariance estimate
 
-        """ variance decay """
-        # precision increases with a rate dependent on its value
+        """ variance decay: precision increases with a rate dependent on its value """
         sigma = sigma.detach()
+        co_sigma = co_sigma.detach()
         for pos, var in enumerate(sigma[0].diagonal()):
-            #sigma[0,pos,pos] = sigma[0,pos,pos] - (LR_sigma * torch.matmul(sigma[0], torch.eye((3))))[pos,pos]
-            sigma[0] = sigma[0] - LR_sigma*sigma[0]
-            sigma[0,pos,pos] = torch.max(sigma[0,pos,pos], torch.ones_like(sigma[0,pos,pos])*.1)
+            #sigma[0,pos,pos] = sigma[0,pos,pos] - (LR_sigma * sigma[0]**-1)[pos,pos] # todo decay rate
+            sigma[0,pos,pos] = torch.max(sigma[0,pos,pos], torch.ones_like(sigma[0,pos,pos])*1)
+
+    # merge estimated variance and covariance: scale the covariance with the variance
+    co_sigma_ = ((co_sigma-1)*10 / ((co_sigma-1)*10)[:,0,0])*sigma[:,0,0]
 
     # log results
     observations.append(ins[0].clone().detach().numpy())
     est_means.append(mean_weighted.clone().detach().numpy()[0])
-    est_covars.append(sigma[0].clone().detach().numpy())
+    est_covars.append(co_sigma_[0].clone().detach().numpy())
     errors.append(error_weighted.clone().detach().numpy())
 
-plot_covariance(observations, est_means, est_covars,
-                method="\nGradient Descent on precision weighted prediction errors")
+plot_covariance(observations, est_means, est_covars, method="\nGradient Descent on precision weighted prediction errors")
 
-print("Covariance:", sigma[0].clone().detach().numpy().round(2))
-
+numpy_cov = np.cov(np.asarray(observations).T).round(2)
+pc_cov = co_sigma_.clone().detach().numpy().round(2)
+print("True covar:", numpy_cov)
+print("GD covar:", pc_cov)
+print("Diff:", (numpy_cov/pc_cov).round(2))
 
 if True:
     """ Estimate mean and variance using Maximum Likelihood"""
-
-    # variance and noise settings
     np.random.seed(1)
-
-    # initialise variables
     ins = torch.zeros((1,3))
     sigma, sigma_weighted = torch.zeros((1,3,3)), torch.zeros((1,3,3))
     means = torch.zeros((1,3))
     observations, bbs, est_covars, est_means = [], [], [], []
 
     for i in range(SAMPLES):
-        # generative some data with constant variance and add random noise
-        ins[0, 0] = (i % MOD) + 0.5 + np.random.normal(0,random_scale)
-        ins[0, 1] = -ins[0, 0] + np.random.normal(0,random_scale)
-        ins[0, 2] = -ins[0, 0]*0.5 - 2 + np.random.normal(0,random_scale)
+        ins = generate_data(i)
 
         # update mean estimate
         means, mean_weighted = ML_mean(means, ins, i)
 
         # update covariance estimate
-        if i > 200: # wait until mean is estimated
+        if i > 20: # wait until mean is estimated
             sigma, sigma_weighted = ML_covar(sigma, ins, mean_weighted, i)
 
         # log results
@@ -131,4 +135,4 @@ if True:
 
     plot_covariance(observations, est_means, est_covars)
 
-    print("Covariance:", sigma_weighted[0].clone().detach().numpy().round(2))
+    print("ML Covariance:", sigma_weighted[0].clone().detach().numpy().round(2))
