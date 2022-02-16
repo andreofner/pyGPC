@@ -1,9 +1,8 @@
 """
 Differentiable Generalized Predictive Coding
 André Ofner 2021
-Circles dataset static prediction
+MNIST classification with a static predictive coding model
 """
-
 import torch.nn.init
 from torch.optim import SGD
 from torch.nn import Sequential, Linear
@@ -510,7 +509,7 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
 
 if __name__ == '__main__':
     """ Train """
-    PCN, seq_input, target, seq_pred_g = run(UPDATES=10, DATAPOINTS=10, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
+    PCN, seq_input, target, seq_pred_g = run(UPDATES=100, DATAPOINTS=1, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
 
     seq_input = np.asarray([s.detach().numpy() for s in seq_input])
     seq_pred_g = np.asarray([s[:,0] for s in seq_pred_g])
