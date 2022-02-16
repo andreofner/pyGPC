@@ -350,9 +350,9 @@ def batch_accuracy(pred_g, target, batch_size):
 """ Network settings"""
 UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 100, 10, 10, 2  # model updates, batch size, input size
 CONVERGED_INFER = 0.  # prediction error threshold to stop inference
-SIZES = [2, 64,64, 64,64, 2]  # (output size, input size) per layer
+SIZES = [2, 256,256, 256,256, 2]  # (output size, input size) per layer
 CAUSE_SPLIT, HIDDEN_SPLIT = 1, 0  # percentage of causes & hidden states used for outgoing prediction
-PREDICT_FIRST = True  # propagate prediction through entire network before computing errors
+PREDICT_FIRST = False  # propagate prediction through entire network before computing errors
 PRECISION = True  # estimate fast (inference, within datapoint) and slow precision (learning, between datapoint)
 
 """ Experiment settings"""
@@ -509,12 +509,12 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
 
 if __name__ == '__main__':
     """ Train """
-    PCN, seq_input, target, seq_pred_g = run(UPDATES=100, DATAPOINTS=1, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
+    PCN, seq_input, target, seq_pred_g = run(UPDATES=10, DATAPOINTS=10, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
 
     seq_input = np.asarray([s.detach().numpy() for s in seq_input])
     seq_pred_g = np.asarray([s[:,0] for s in seq_pred_g])
 
-    plt.scatter(seq_input[:,0,0],  seq_input[:,0,1], label="Observation")
-    plt.scatter(seq_pred_g[:,0,0],  seq_pred_g[:,0,1], label="Prediction")
+    plt.plot(seq_input[:,0,0],  seq_input[:,0,1], label="Observation")
+    plt.plot(seq_pred_g[:,0,0],  seq_pred_g[:,0,1], label="Prediction")
     plt.legend()
     plt.show()
