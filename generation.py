@@ -528,7 +528,7 @@ if __name__ == '__main__':
     # when high accuracy classification or prediction is relevant, set a high value <UPDATES> and stop when converged, e.g. precision=1
     PCN = initialise(PCN, test=True)
 
-    # manually initialise inference precision 
+    # manually initialise inference precision
     for l,_ in enumerate(PCN.layers):
         PCN.covar[l] = torch.eye(PCN.curr_cause[l].shape[-1]).repeat([B_SIZE_TEST, 1, 1]) * (1 - 1000) + 1000
     PCN.initialised = [True for _ in PCN.layers]
