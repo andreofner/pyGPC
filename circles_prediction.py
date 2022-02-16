@@ -1,7 +1,7 @@
 """
 Differentiable Generalized Predictive Coding
 André Ofner 2021
-MNIST classification with a static predictive coding model
+Circles dataset with a static predictive coding model
 """
 import torch.nn.init
 from torch.optim import SGD
