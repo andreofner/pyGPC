@@ -540,13 +540,3 @@ if __name__ == '__main__':
         predictions = np.asarray(predictions)
         plt.plot(predictions[:,0,0], predictions[:,0,1])
         plt.show()
-
-
-    # todo predict dynamica first then update
-    # todo predict dt and skip observations
-    # todo multiply by x? check baseline
-
-    # feed burn in datapoints to target !! it contains the radius!!
-    # and predct dynamical first so that the transition offers the updated angle!
-    # fix precision of hidden states
-    # it would be better if the previous PCN could still be optimized..
