@@ -505,7 +505,7 @@ def transition_and_predict(m, l, keep_states=True, keep_cause=None, keep_hidden=
 
 if __name__ == '__main__':
     """ Train """
-    PCN, seq_input, target, seq_pred_g = run(UPDATES=5, DATAPOINTS=10, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
+    PCN, seq_input, target, seq_pred_g = run(UPDATES=30, DATAPOINTS=10, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
 
     # plot results
     seq_input = np.asarray([s.detach().numpy() for s in seq_input])
