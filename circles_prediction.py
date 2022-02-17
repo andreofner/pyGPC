@@ -42,11 +42,11 @@ class Model(torch.nn.Module):
 
     def params(self, l):
         """ States and learning rates per layer """
-        return [{'params': [self.curr_cause[l + 1]], 'lr': .01},  # higher state
-                      {'params': [self.curr_hidden[l + 1]], 'lr': .01},  # higher state
-                      {'params': [self.curr_cause[l]], 'lr': 0.0001},  # lower state
-                      {'params': [self.curr_hidden[l]], 'lr': 0.0001}] + self.params_weights(l) # lower hidden state  todo fix learning rate
-                        # todo hidden state precision and then scale up the LR
+        return [{'params': [self.curr_cause[l + 1]], 'lr': 0.},  # higher state
+                      {'params': [self.curr_hidden[l + 1]], 'lr': .1},  # higher state
+                      {'params': [self.curr_cause[l]], 'lr': 0},  # lower state
+                      {'params': [self.curr_hidden[l]], 'lr': 0.0001}] + self.params_weights(l) # lower hidden state  todo this is crucial: tune or use precision
+
     def params_covar(self, l):
         """ Covariances and learning rates per layer """
         return [{'params': [self.covar_slow[l]], 'lr': self.lr[l][3]}, # slow cause state covariance
@@ -152,8 +152,7 @@ def predict(m, l, keep_states=True, keep_cause=None, keep_hidden=None):
             m.curr_hidden = keep_hidden
         return input_prediction
 
-def GPC(m, l, infer_precision=False, optimize=True,
-        var_prior=1, covar_prior=10000000,
+def GPC(m, l, infer_precision=False, optimize=True, var_prior=1, covar_prior=10000000,
         learn=False, full_covar=False, last_PCN=None):
     """
     Layer-wise Generalized Predictive Coding optimizer
@@ -300,20 +299,14 @@ def initialise(PCN, test=False):
                 PCN.lr[0][1] = 0.0  # state lr input layer
     return PCN
 
-def batch_accuracy(pred_g, target, batch_size):
-    """ Computes classification results for a batch"""
-    pred_classes = pred_g.detach().reshape([batch_size, 1, 10]).mean(-2).argmax(-1)
-    correct = (torch.tensor(pred_classes) == target).sum().detach().numpy()
-    accuracy = 100. * correct / batch_size
-    return accuracy, pred_classes, correct
-
 
 """ Network settings"""
-UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 100, 10, 10, 2  # model updates, batch size, input size
+UPDATES, B_SIZE, B_SIZE_TEST, IMAGE_SIZE = 100, 100, 100, 2  # model updates, batch size, input size
 CONVERGED_INFER = 0.  # prediction error threshold to stop inference
-SIZES = [2, 16,16, 16,16, 2]  # (output size, input size) per layer
+SIZES = [2, 128,128, 64,64, 32,32, 16,16, 2]  # (output size, input size) per layer
 CAUSE_SPLIT, HIDDEN_SPLIT = 0, 1  # percentage of causes & hidden states used for outgoing prediction
-PREDICT_FIRST = False  # propagate prediction through entire network before computing errors
+PREDICT_FIRST = True  # propagate prediction through entire network before computing errors
+TRANSITION_FIRST = True  # propagate dynamical prediction in all layers before computing errors
 PRECISION = True  # estimate fast (inference, within datapoint) and slow precision (learning, between datapoint)
 
 """ Experiment settings"""
@@ -339,9 +332,6 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
                     lr_w_d=[0 for _ in range(len(SIZES))],  # dynamical weights learning rate
                     lr_p=[.1 for _ in range(len(SIZES))],  # hierarchical & dynamical precision learning rate
                     sr=[1 for _ in range(14)])  # sampling interval (skipped observations in lower layer)
-
-        # todo hidden states learning rate --> high values
-        # todo dynamical weights learning rate --> high values
 
     if test:
         env_id = 1; env_name = 'Test';
@@ -379,7 +369,7 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
     # iterative through batches
     for a_id, data_input in enumerate(data_loader):
         if a_id >= DATAPOINTS: break
-        data_input = (data_input.transpose(0,1) + 3)
+        data_input = data_input.transpose(0,1)
         seq_inputs, seq_preds = None, None  # log current sequence
         last_PCN = copy.deepcopy(PCN) # prior PCN before next datapoint # todo initialise as None?
 
@@ -391,13 +381,14 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
                 [[] for _ in PCN.layers] for _ in range(5)]
 
         # iterate through sequences
-        for seq_pos, data in enumerate(data_input[:30]):
+        for seq_pos, data in enumerate(data_input):
 
             """ Check progress """
             if a_id >= DATAPOINTS: break
             converged = False
             input = data
-            target = data
+            if seq_pos == 0:
+                target = input
 
             """ Initialise fast precision with learned precision prior """
             if PRECISION and not test:  # during testing, we might have different covar shapes
@@ -405,12 +396,14 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
                 PCN.covar_hidden = [(PCN.covar_hidden[l]*0 + v).detach().requires_grad_() for l,v in enumerate(PCN.covar_hidden_slow)]
 
             """ Optionally predict through entire network first. """
-            if PREDICT_FIRST:
+            if TRANSITION_FIRST: # todo add option to transition / run dynamics without changing the causes
+                transition_and_predict(PCN, l=len(PCN.layers)-1, keep_states=False)
+            elif PREDICT_FIRST:
                 predict(PCN, l=len(PCN.layers)-1, keep_states=False)
 
             """ Feed target ("deepest prior" or "cause") and input ("outcome") """
             feed_observation(PCN, batch_size=batch_size, input=input, test=env_id>0)
-            feed_target_image(PCN, batch_size=batch_size, input=input, test=env_id>0)
+            feed_target_image(PCN, batch_size=batch_size, input=target, test=env_id>0)
 
             """  Optimise hierarchical layers in parallel """
             for update in range(UPDATES):
@@ -429,7 +422,7 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
                     if PRECISION and update == 0 and not test:
                         GPC(PCN, l=l_h, infer_precision=True, learn=True, full_covar=test)
 
-                    # log precision and error at selected layer
+                    # log precision and error
                     precisions[l_h].append(np.diag(np.array(PCN.covar[l_h].mean(dim=0).detach())).mean())
                     precisions_slow[l_h].append(np.diag(np.array(PCN.covar_slow[l_h].mean(dim=0).detach())).mean())
                     raw_errors[l_h].append(e_h[0].mean(dim=0).detach().numpy().mean())
@@ -448,7 +441,7 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
 
                         if a_id == DATAPOINTS - 1 and False:
                             for d, n in zip([cause_l0[0][-1], p_h, preds_g[0][-1], preds_gt[0][-1]], ["input", "pred_h", "pred_g", "pred_gt"]):
-                                plot_batch(d, title=str(env_name) + n, targets=target, predictions=torch.tensor(pred_classes))
+                                plot_batch(d, title=str(env_name) + n, targets=target)
 
                         datapoints.append(total_updates)
 
@@ -476,15 +469,84 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
             pass
     return PCN, seq_inputs, target, seq_preds
 
+
+def transition_and_predict(m, l, keep_states=True, keep_cause=None, keep_hidden=None):
+    """ Prediction through the cause states of the entire network."""
+
+    # make sure model stays unchanged if requested
+    if keep_states and keep_cause is None:
+        keep_cause = [c.clone().detach() for c in m.curr_cause]
+        keep_hidden = [c.clone().detach() for c in m.curr_hidden]
+
+    # get cause prediction from higher layer
+    higher_state = m.state(l + 1)
+    higher_state = higher_state.requires_grad_()
+
+    # replace cause with top-down prediction
+    pred = m.layers[l].forward(higher_state)
+    m.curr_cause[l] = pred.reshape(m.curr_cause[l].shape).detach().requires_grad_()
+
+    # transition the hidden state (curr_cause, curr_hidden)  --> curr_hidden
+    if l > 0:
+        past_state = m.state(l).detach()
+        past_hidden = m.hidden(l).detach()
+        pred_t = m.layers_d[l].forward(past_state) * past_hidden  # dynamical prediction / hidden state transition
+        m.curr_hidden[l] = pred_t.clone().detach().requires_grad_()  # replace higher hidden with its prediction
+
+    # continue in lower layer
+    if l > 0:
+        return predict(m, l-1, keep_states=keep_states, keep_cause=keep_cause, keep_hidden=keep_hidden)
+    else: # return prediction in lowest layer
+        input_prediction = m.curr_cause[0].clone().detach().numpy()
+        if keep_states:
+            m.curr_cause = keep_cause
+            m.curr_hidden = keep_hidden
+        return input_prediction
+
 if __name__ == '__main__':
     """ Train """
-    PCN, seq_input, target, seq_pred_g = run(UPDATES=300, DATAPOINTS=1, PCN=None, test=False)
+    PCN, seq_input, target, seq_pred_g = run(UPDATES=5, DATAPOINTS=10, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
 
+    # plot results
     seq_input = np.asarray([s.detach().numpy() for s in seq_input])
-    seq_pred_g = np.asarray([s[:,0] for s in seq_pred_g])
-
-    plt.plot(seq_input[:,0,0],  seq_input[:,0,1], label="Observation")
-    plt.plot(seq_pred_g[:,0,0],  seq_pred_g[:,0,1], label="Prediction")
+    seq_pred_g = np.asarray([s[:, 0] for s in seq_pred_g])
+    for b, c in enumerate(["blue", "green", "red"]):
+        plt.plot(seq_input[:,b,0],  seq_input[:,b,1], label="Observation", color=c)
+        plt.plot(seq_pred_g[:,b,0],  seq_pred_g[:,b,1], label="Prediction", color=c, linestyle="--")
     plt.legend()
     plt.show()
 
+
+    if False:
+        """ Test """
+        data = get_dataset(get_dataset_args())
+        train_set = torch.from_numpy(data['x']).transpose(0,1)
+        data_loader = torch.utils.data.DataLoader(train_set, B_SIZE, False)
+
+        for a_id, data_input in enumerate(data_loader):
+            data_input = (data_input.transpose(0,1) + 3)
+            for seq_pos, data in enumerate(data_input[:30]):
+                feed_observation(PCN, data, B_SIZE, False)
+                break
+            break
+
+        prediction_l0 = predict(PCN, l=0, keep_states=True)
+        predictions = [prediction_l0[0]]
+        # use the models dynamical weights to generate new predictions
+        for i in range(25):
+            prediction_l0 = transition_and_predict(PCN, l=len(PCN.layers)-1, keep_states=False)
+            predictions.append(prediction_l0[0])
+
+        predictions = np.asarray(predictions)
+        plt.plot(predictions[:,0,0], predictions[:,0,1])
+        plt.show()
+
+
+    # todo predict dynamica first then update
+    # todo predict dt and skip observations
+    # todo multiply by x? check baseline
+
+    # feed burn in datapoints to target !! it contains the radius!!
+    # and predct dynamical first so that the transition offers the updated angle!
+    # fix precision of hidden states
+    # it would be better if the previous PCN could still be optimized..
