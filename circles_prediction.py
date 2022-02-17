@@ -478,7 +478,7 @@ def run(UPDATES, PCN=None, test=False, DATAPOINTS=50):
 
 if __name__ == '__main__':
     """ Train """
-    PCN, seq_input, target, seq_pred_g = run(UPDATES=100, DATAPOINTS=10, PCN=None, test=False)  # around 50 batches are enough to see meaningful results
+    PCN, seq_input, target, seq_pred_g = run(UPDATES=300, DATAPOINTS=1, PCN=None, test=False)
 
     seq_input = np.asarray([s.detach().numpy() for s in seq_input])
     seq_pred_g = np.asarray([s[:,0] for s in seq_pred_g])
