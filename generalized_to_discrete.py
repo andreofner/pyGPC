@@ -7,11 +7,11 @@ from lorenz_attractor import *
 Hierarchical predictions g(x,v) in generalized coordinates by fitting n-th order polynomials to (noisy) datapoints 
 - exploits the temporal locality of outgoing predictions in generalized predictive coding
 - the number of generalized coordinates (coefficients of the polynomial) 
-  is independent of the temporal resolution (= sequence length = number of fitted samples in btach dimension) 
+  is independent of the temporal resolution (= sequence length = number of fitted samples in batch dimension) 
 - allows to treat predictions (and their precision) over time and space equally 
 
 Converting generalised predictions to sensory samples would normally require 
-autoregressive prediction using Taylor's theorem.
+autoregressive prediction using Taylor's theorem and finite differences for their estimation.
 
 Hierarchical predictions of v are wrt. points in time (or space), i.e. y(t) = g(x,v,t)  
     -> n-th order (Taylor polynomial) expansion of observed datapoint 
@@ -90,3 +90,16 @@ for chunk in range(seqs):
     plt.plot(t, torch.tensor(prediction.detach()), label="Prediction", color="green")
 plt.title("Noisy observations of a Lorenz attractor")
 plt.show()
+
+
+# After estimating the nth-order polynomial coefficients from data via regression
+# we get their derivatives (-> generalized coordinates) simply via the derivative matrix D:
+
+coeffs = net.weight[:,:n_g_coords].unsqueeze(-1)
+print("Estimated polynomial coefficients: ", coeffs.detach()[0])
+for deriv in range(n_g_coords-1):
+    D = (torch.eye(coeffs.shape[1]) * torch.range(0, coeffs.shape[1]-1, 1))[1:].unsqueeze(0)
+    d_coeff = torch.matmul(D, coeffs)
+    print("Derivative operator ", D.detach()[0])
+    print(f'Coefficients of {deriv} derivative:', d_coeff.detach()[0])
+    coeffs = d_coeff
