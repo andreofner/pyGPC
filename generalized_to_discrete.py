@@ -6,6 +6,8 @@ from lorenz_attractor import *
 """ 
 Hierarchical predictions g(x,v) in generalized coordinates by fitting n-th order polynomials to (noisy) datapoints 
 - exploits the temporal locality of outgoing predictions in generalized predictive coding
+- the number of generalized coordinates (coefficients of the polynomial) 
+  is independent of the temporal resolution (= sequence length = number of fitted samples in btach dimension) 
 - allows to treat predictions (and their precision) over time and space equally 
 
 Converting generalised predictions to sensory samples would normally require 
