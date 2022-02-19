@@ -20,17 +20,20 @@ Dynamical predictions of x_dot are wrt. x and v, i.e. x_dot_dt = f(x,v,dt)
 """
 
 # model settings
-n_g_coords = 10  # how many generalized coordinates to use
+n_g_coords = 8  # how many generalized coordinates to use
+input_dim = 2  # number of inputs in generalised coordinates
+
+n_g_coords_out = 1  # how many generalized coordinates to use for output. use 1 for sensory observations
 output_dim = 1  # shape of observation
 coeffs = [torch.randn((), requires_grad=True) for coord in range(n_g_coords)]
 
 # optimisation settings
-seqs = 5
+seqs = 1
 seq_length = 16
-updates = 1000
+updates = 10
 dt = 0.01
 
-net = torch.nn.Linear(n_g_coords, output_dim, bias=True)
+net = torch.nn.Linear(n_g_coords*input_dim, output_dim*n_g_coords_out, bias=True)
 opt = torch.optim.SGD(net.parameters(), 0.01)
 
 initial = (0., 1., 1.05)
@@ -39,27 +42,51 @@ for chunk in range(seqs):
     # create data: lorenz attractor (ODE)
     x, y, z = generate_data(num_steps=seq_length, dt=dt, plot=False, initial=initial)
     initial = (x[-1].item(), y[-1].item(), z[-1].item())
-    x_ = torch.tensor(x) * .01
-    y = torch.tensor(y) * .01
-    z_ = torch.tensor(z) * .01
-    x = torch.range(1, y.shape[0]) / seq_length  # time axis (ODE sampled at specific time points)
 
-    # create n-th order inputs (x, x^2, x^3, ...) for generalized coordinates
+    # scale observations to useful range and add noise
+    scale = 0.1
+    noise_scale = scale*.1
+    x = torch.tensor(x) * scale + torch.rand_like(torch.tensor(x)) * noise_scale
+    y = torch.tensor(y) * scale + torch.rand_like(torch.tensor(y)) * noise_scale
+    z = torch.tensor(z) * scale + torch.rand_like(torch.tensor(z)) * noise_scale
+    t = (torch.range(1, y.shape[0]) / seq_length)#.unsqueeze(-1)  # time axis
+
+    # create n-th order inputs (in generalized coordinates)
+    # just (x, x^2, x^3, ...), (y, y^2, y^3, ...), etc.
+    t_g = [t]
+    [t_g.append(t**(n+1)) for n in range(1,n_g_coords,1)]
+    t_g = torch.stack(t_g).float()
+
     x_g = [x]
-    [x_g.append(x**n) for n, coeff in enumerate(coeffs[1:])]
-    x_g = torch.stack(x_g)
+    [x_g.append(x**(n+1)) for n in range(1,n_g_coords,1)]
+    x_g = torch.stack(x_g).float()
 
-    y = y + torch.rand_like(y) * 0.01 # add noise to observations
-    x_g, y = x_g.T, y.T.unsqueeze(1)  # view time as batch
+    y_g = [y]
+    [y_g.append(y**(n+1)) for n in range(1,n_g_coords,1)]
+    y_g = torch.stack(y_g).float()
 
-    for t in range(updates):
-        y_pred = net(x_g)
-        loss = ((y_pred - y)**2).sum()
+    z_g = [z]
+    [z_g.append(z**(n+1)) for n in range(1,n_g_coords_out,1)]
+    z_g = torch.stack(z_g).float()
+
+    t_g, x_g, y_g, z_g = t_g.T, x_g.T, y_g.T, z_g.T
+
+    # the original first order values
+    t = t.unsqueeze(-1)
+    x = x.unsqueeze(-1)
+    y = y.unsqueeze(-1)
+    z = z.unsqueeze(-1)
+
+    input = torch.cat([t_g, y_g],-1)
+    target = z_g
+    for update in range(updates):
+        prediction = net(input)
+        loss = ((prediction - target)**2).sum()
         opt.zero_grad()
         loss.backward()
         opt.step()
 
-    plt.plot(x, y, label="Observation", color="black")
-    plt.plot(torch.tensor(x), torch.tensor(y_pred.detach()), label="Prediction", color="green")
+    plt.plot(t, target, label="Observation", color="black")
+    plt.plot(t, torch.tensor(prediction.detach()), label="Prediction", color="green")
 plt.title("Noisy observations of a Lorenz attractor")
 plt.show()
