@@ -61,5 +61,5 @@ for chunk in range(seqs):
 
     plt.plot(x, y, label="Observation", color="black")
     plt.plot(torch.tensor(x), torch.tensor(y_pred.detach()), label="Prediction", color="green")
-plt.title("Noisy observations of the lorenz attractor")
+plt.title("Noisy observations of a Lorenz attractor")
 plt.show()
