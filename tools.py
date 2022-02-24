@@ -14,11 +14,13 @@ import matplotlib.pyplot as plt
 import torchvision
 from moviepy.editor import ImageSequenceClip
 from gym.envs.registration import register as gym_register
-from generation import B_SIZE, IMAGE_SIZE, predict
+from GPC_MovingMNIST import BATCH_SIZE, IMG_SIZE
 import pandas as pd
 
 IMG_NOISE = 0.0  # gaussian noise on inputs
 
+def predict():
+    return None # todo
 
 def visualize_precision(PCN, batch_id=0, input_projection=False, zero_var_covar=False):
     covar = PCN.covar[0].detach()[batch_id:batch_id+1] ** -1
@@ -152,11 +154,11 @@ def plot_thumbnails(variances=[], variance_labels=[], errors=None, inputs=None, 
             except:
                   try:
                         inputs = np.asarray([pred.squeeze() for pred in inputs[0]])
-                        inputs = inputs.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
+                        inputs = inputs.reshape([-1, int(math.sqrt(IMG_SIZE)), int(math.sqrt(IMG_SIZE)), 1])
                         inputs = np.asarray([p.detach().numpy() for p in inputs[0]]).squeeze()
                   except:
                         inputs = np.asarray([pred.detach().numpy().squeeze() for pred in inputs[0]])
-                        inputs = inputs.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
+                        inputs = inputs.reshape([-1, int(math.sqrt(IMG_SIZE)), int(math.sqrt(IMG_SIZE)), 1])
                         inputs = np.asarray([p.detach().numpy() for p in inputs[0]]).squeeze()
 
       fig, ax = plt.subplots(1, 1)
@@ -227,7 +229,7 @@ def plot_batch(batch, p=0, show=False, title="", targets=None, predictions=None)
       for i in range(4):
         for j in range(4):
             try:
-                  axs[i,j].imshow(batch[p].reshape([int(math.sqrt(IMAGE_SIZE)),int(math.sqrt(IMAGE_SIZE))]))
+                  axs[i,j].imshow(batch[p].reshape([int(math.sqrt(IMG_SIZE)),int(math.sqrt(IMG_SIZE))]))
             except:
                   pass
             axs[i, j].set_xticks([])
@@ -257,10 +259,10 @@ def sequence_video(data, title="", plt_title="", scale=255, plot=False, plot_vid
 
       try:
             predicts_plot = np.asarray([pred.squeeze() for pred in data[0]])
-            predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
+            predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMG_SIZE)), int(math.sqrt(IMG_SIZE)), 1])
       except:
             predicts_plot = np.asarray([pred.detach().numpy().squeeze() for pred in data[0]])
-            predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMAGE_SIZE)), int(math.sqrt(IMAGE_SIZE)), 1])
+            predicts_plot = predicts_plot.reshape([-1, int(math.sqrt(IMG_SIZE)), int(math.sqrt(IMG_SIZE)), 1])
 
       if plot_video: # save episode as gif
             clip = ImageSequenceClip(list(predicts_plot*scale), fps=20)
@@ -327,7 +329,7 @@ class MnistEnv(gym.Env):
                               self.time_state = 0   # position in current sequence
                               self.step_size_xy = AGENT_STEP_SIZE # how large steps within frames are
 
-                  self.number_of_agents = B_SIZE
+                  self.number_of_agents = BATCH_SIZE
                   self.data = load_moving_mnist(test=test)
                   self.shape = 64, 64
                   self.nr_sequences = 1000 # sequences in dataset
