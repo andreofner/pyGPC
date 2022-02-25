@@ -17,7 +17,6 @@ from MovingMNIST import *
 
 plt.style.use(['seaborn'])
 
-
 def plot_graph(hierarchical=True, dynamical=True, g_coords=True):
     lines, lstyles, labels = [], ['-', '--', '-.', ':'], []
 
@@ -45,14 +44,27 @@ def plot_graph(hierarchical=True, dynamical=True, g_coords=True):
 
     # generalized coordinates
     if g_coords:
+        # cause states # todo plot separately for each coordinate
         lines += plt.plot(np.asarray(cov_g1).mean(-1), color="grey", linestyle=lstyles[0])
         lines += plt.plot(np.asarray(cov_g1).mean(-1), color="grey", linestyle=lstyles[1])
         lines += plt.plot(np.asarray(cov_g1).mean(-1), color="grey", linestyle=lstyles[2])
         lines += plt.plot(np.asarray(err_g1).mean(-1), color="orange", linestyle=lstyles[0])
         lines += plt.plot(np.asarray(err_g2).mean(-1), color="orange", linestyle=lstyles[1])
         lines += plt.plot(np.asarray(err_g3).mean(-1), color="orange", linestyle=lstyles[2])
-        labels += [f"Generalized motion error variance L{l + 1}" for l in range(3)]
-        labels += [f"Generalized motion prediction error L{l + 1}" for l in range(3)]
+        labels += [f"Cause motion error variance L{l + 1}" for l in range(3)]
+        labels += [f"Cause motion prediction error L{l + 1}" for l in range(3)]
+
+        # hidden states # todo plot separately for each coordinate
+        #lines += plt.plot(np.asarray(cov_g1).mean(-1), color="brown", linestyle=lstyles[0])
+        #lines += plt.plot(np.asarray(cov_g1).mean(-1), color="brown", linestyle=lstyles[1])
+        #lines += plt.plot(np.asarray(cov_g1).mean(-1), color="brown", linestyle=lstyles[2])
+        # todo include covariance of hidden state motion
+        lines += plt.plot(np.asarray(err_h1).mean(-1), color="olive", linestyle=lstyles[0])
+        lines += plt.plot(np.asarray(err_h2).mean(-1), color="olive", linestyle=lstyles[1])
+        lines += plt.plot(np.asarray(err_h3).mean(-1), color="olive", linestyle=lstyles[2])
+        #labels += [f"Generalized hidden motion error variance L{l + 1}" for l in range(3)]
+        labels += [f"Hidden motion prediction error L{l + 1}" for l in range(3)]
+
 
     plt.title("Hierarchical and dynamical prediction errors")
     plt.legend(lines, labels, bbox_to_anchor=(1.04, 0.5), loc="center left", borderaxespad=0)
@@ -529,7 +541,7 @@ if __name__ == '__main__':
             # step hierarchical net
             e, _, _, ch, _ = net.iterative_inference(data, updates=UPDATES)
 
-            # step dynamical nets  # todo include hidden states
+            # step dynamical nets  # todo return covariance of hidden state change prediction error
             eg1, eh1, ed1, cg1, cd1 = net_d1.iterative_inference(updates=UPDATES)
             eg2, eh2, ed2, cg2, cd2 = net_d2.iterative_inference(updates=UPDATES)
             eg3, eh3, ed3, cg3, cd3 = net_d3.iterative_inference(updates=UPDATES)
@@ -562,7 +574,7 @@ if __name__ == '__main__':
         if seq_id == 0: break
 
     # Overview plots
-    plot_graph(g_coords=True, dynamical=True)
+    plot_graph(hierarchical=True, g_coords=True, dynamical=True)
     input, preds = plot_2D(img_size=IMG_SIZE, title="State prediction", examples=4, plot=True)
 
     # Create video
