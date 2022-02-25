@@ -1,7 +1,6 @@
 """
 Differentiable Generalized Predictive Coding
 André Ofner 2021
-
 Hierarchical-dynamical prediction of local and global trajectories on Moving MNIST
 """
 
@@ -11,7 +10,8 @@ from PIL import Image
 from torch.nn import Parameter as P
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
-from MovingMNIST import *
+
+from pyGPC.MovingMNIST import *
 
 plt.style.use(['seaborn'])
 
@@ -502,7 +502,7 @@ if __name__ == '__main__':
 
     VIDEO = True
     BATCH_SIZE, IMG_SIZE = 16, 16
-    LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = .1, 0.0001, 0.001, 30
+    LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = .01, 0.001, 0.0001, 10
     train_set = MovingMNIST(root='.data/mnist', train=True, download=True,
                             transform=transforms.Compose([transforms.Scale(IMG_SIZE), transforms.ToTensor(), ]))
     train_loader = torch.utils.data.DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True)
@@ -566,10 +566,8 @@ if __name__ == '__main__':
                 vid_p2.append(preds[1][0].reshape([IMG_SIZE, IMG_SIZE]))
                 vid_p3.append(preds[2][0].reshape([IMG_SIZE, IMG_SIZE]))
 
-            if id % 1 == 0:
-                print(id, np.asarray(errors)[-1].mean())
-                break
-        if seq_id == 0: break
+            if id == 0: print(id, np.asarray(errors)[-1].mean())
+        if seq_id == 3: break
 
     # Overview plots
     plot_graph(hierarchical=True, g_coords=True, dynamical=True)
