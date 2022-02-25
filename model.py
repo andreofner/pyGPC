@@ -18,47 +18,47 @@ from MovingMNIST import *
 plt.style.use(['seaborn'])
 
 
-def plot_graph():
-    lines, lstyles = [], ['-', '--', '-.', ':']
+def plot_graph(hierarchical=True, dynamical=True, g_coords=True):
+    lines, lstyles, labels = [], ['-', '--', '-.', ':'], []
 
     # hierarchical prediction
-    if True:
+    if hierarchical:
         lines += plt.plot(np.asarray(errors)[:, 0], color="red", linestyle=lstyles[0])
         lines += plt.plot(np.asarray(errors)[:, 1], color="red", linestyle=lstyles[1])
         lines += plt.plot(np.asarray(errors)[:, 2], color="red", linestyle=lstyles[2])
         lines += plt.plot(np.asarray(cov_h)[:, 0], color="green", linestyle=lstyles[0])
         lines += plt.plot(np.asarray(cov_h)[:, 1], color="green", linestyle=lstyles[1])
         lines += plt.plot(np.asarray(cov_h)[:, 2], color="green", linestyle=lstyles[2])
+        labels += [f"Prediction error L{l + 1}" for l in range(3)]
+        labels += [f"Error variance L{l + 1}" for l in range(3)]
 
     # dynamical prediction
-    if True:
+    if dynamical:
         lines += plt.plot(np.asarray(errors_d1), color="black", linestyle=lstyles[0])
         lines += plt.plot(np.asarray(errors_d2), color="black", linestyle=lstyles[1])
         lines += plt.plot(np.asarray(errors_d3), color="black", linestyle=lstyles[2])
         lines += plt.plot(np.asarray(cov_d1), color="blue", linestyle=lstyles[0])
         lines += plt.plot(np.asarray(cov_d2), color="blue", linestyle=lstyles[1])
         lines += plt.plot(np.asarray(cov_d3), color="blue", linestyle=lstyles[2])
+        labels += [f"Dynamical prediction error L{l + 1}" for l in range(3)]
+        labels += [f"Dynamical error variance L{l + 1}" for l in range(3)]
 
     # generalized coordinates
-    if True:
-        lines += plt.plot(np.asarray(cov_g1).mean(-1), color="yellow", linestyle=lstyles[0])
-        lines += plt.plot(np.asarray(cov_g1).mean(-1), color="yellow", linestyle=lstyles[1])
-        lines += plt.plot(np.asarray(cov_g1).mean(-1), color="yellow", linestyle=lstyles[2])
-        lines += plt.plot(np.asarray(err_g1).mean(-1), color="black", linestyle=lstyles[0])
-        lines += plt.plot(np.asarray(err_g2).mean(-1), color="black", linestyle=lstyles[1])
-        lines += plt.plot(np.asarray(err_g3).mean(-1), color="black", linestyle=lstyles[2])
+    if g_coords:
+        lines += plt.plot(np.asarray(cov_g1).mean(-1), color="grey", linestyle=lstyles[0])
+        lines += plt.plot(np.asarray(cov_g1).mean(-1), color="grey", linestyle=lstyles[1])
+        lines += plt.plot(np.asarray(cov_g1).mean(-1), color="grey", linestyle=lstyles[2])
+        lines += plt.plot(np.asarray(err_g1).mean(-1), color="orange", linestyle=lstyles[0])
+        lines += plt.plot(np.asarray(err_g2).mean(-1), color="orange", linestyle=lstyles[1])
+        lines += plt.plot(np.asarray(err_g3).mean(-1), color="orange", linestyle=lstyles[2])
+        labels += [f"Generalized motion error variance L{l + 1}" for l in range(3)]
+        labels += [f"Generalized motion prediction error L{l + 1}" for l in range(3)]
 
     plt.title("Hierarchical and dynamical prediction errors")
-    plt.legend(lines,
-               [f"Prediction error L{l + 1}" for l in range(3)] +
-               [f"Error variance L{l + 1}" for l in range(3)] +
-               [f"Dynamical prediction error L{l + 1}" for l in range(3)] +
-               [f"Dynamical error variance L{l + 1}" for l in range(3)] +
-               [f"Generalized motion error variance L{l + 1}" for l in range(3)]+
-               [f"Generalized motion prediction error L{l + 1}"for l in range(3)])
-    plt.xlabel("Update")
-    plt.ylabel("Magnitude")
-    #plt.yscale("log", base=10)
+    plt.legend(lines, labels, bbox_to_anchor=(1.04, 0.5), loc="center left", borderaxespad=0)
+    plt.xlabel("Update"); plt.ylabel("Magnitude")
+    plt.savefig("./errors_graph.png", bbox_inches="tight")
+    plt.tight_layout()
     plt.show()
 
 def plot_2D(img_size=64, title="", plot=True, examples=1):
@@ -103,6 +103,7 @@ def plot_2D(img_size=64, title="", plot=True, examples=1):
     if plot:
         plt.suptitle(str(title))
         plt.tight_layout()
+        plt.savefig("./batch.png", bbox_inches="tight")
         plt.show()
 
     return input, preds
@@ -472,26 +473,26 @@ if __name__ == '__main__':
 
     VIDEO = True
     BATCH_SIZE, IMG_SIZE = 16, 16
-    LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = .1, 0.0001, 0.0001, 50
+    LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = .1, 0.0001, 0.001, 50
     train_set = MovingMNIST(root='.data/mnist', train=True, download=True,
                             transform=transforms.Compose([transforms.Scale(IMG_SIZE), transforms.ToTensor(), ]))
     train_loader = torch.utils.data.DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True)
 
     # hierarchical net with three layers
-    cause_sizes = [IMG_SIZE * IMG_SIZE, 128, 64, 32]
+    cause_sizes = [IMG_SIZE * IMG_SIZE, 128, 64, 64]
     net = GPC_net(b_size=BATCH_SIZE, dynamical_net=False,
                   cause_sizes=cause_sizes)
 
     # the state motion of each hierarchical layer is predicted by a dynamical network
     net_d1 = GPC_net(b_size=BATCH_SIZE, dynamical_net=True, obs_layer=net.layers[0],
                      cause_sizes=[cause_sizes[1] for _ in range(4)],
-                     hidden_sizes=[cause_sizes[1] for _ in range(4)]) # todo dynamical layers don't have cause states!
+                     hidden_sizes=[0 for _ in range(4)]) 
     net_d2 = GPC_net(b_size=BATCH_SIZE, dynamical_net=True, obs_layer=net.layers[1],
                      cause_sizes=[cause_sizes[2] for _ in range(4)],
-                     hidden_sizes=[cause_sizes[2] for _ in range(4)]) # todo dynamical layers don't have cause states!
+                     hidden_sizes=[0 for _ in range(4)]) 
     net_d3 = GPC_net(b_size=BATCH_SIZE, dynamical_net=True, obs_layer=net.layers[2],
                      cause_sizes=[cause_sizes[3] for _ in range(4)],
-                     hidden_sizes=[cause_sizes[3] for _ in range(4)]) # todo dynamical layers don't have cause states!
+                     hidden_sizes=[0 for _ in range(4)]) 
     net.print_states()
 
     # logging
