@@ -546,7 +546,7 @@ if __name__ == '__main__':
             eg2, eh2, ed2, cg2, cd2 = net_d2.iterative_inference(updates=UPDATES)
             eg3, eh3, ed3, cg3, cd3 = net_d3.iterative_inference(updates=UPDATES)
 
-            # logging
+            # logging # todo sumamrize across layers
             errors, cov_h = errors + e, cov_h + ch
             errors_d1, cov_d1 = errors_d1 + ed1, cov_d1 + cd1
             errors_d2, cov_d2 = errors_d2 + ed2, cov_d2 + cd2
