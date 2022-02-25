@@ -11,8 +11,6 @@ from PIL import Image
 from torch.nn import Parameter as P
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
-
-from tools import *
 from MovingMNIST import *
 
 plt.style.use(['seaborn'])
