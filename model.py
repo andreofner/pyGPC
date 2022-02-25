@@ -19,27 +19,46 @@ plt.style.use(['seaborn'])
 
 
 def plot_graph():
-    lines = []
-    lstyles = ['-', '--', '-.', ':']
-    lines += plt.plot(np.asarray(errors)[:, 0], color="red", linestyle=lstyles[0])
-    lines += plt.plot(np.asarray(errors)[:, 1], color="red", linestyle=lstyles[1])
-    lines += plt.plot(np.asarray(errors)[:, 2], color="red", linestyle=lstyles[2])
-    lines += plt.plot(np.asarray(cov_h)[:, 0], color="green", linestyle=lstyles[0])
-    lines += plt.plot(np.asarray(cov_h)[:, 1], color="green", linestyle=lstyles[1])
-    lines += plt.plot(np.asarray(cov_h)[:, 2], color="green", linestyle=lstyles[2])
-    lines += plt.plot(np.asarray(errors_d1), color="black", linestyle=lstyles[0])
-    lines += plt.plot(np.asarray(errors_d2), color="black", linestyle=lstyles[1])
-    lines += plt.plot(np.asarray(errors_d3), color="black", linestyle=lstyles[2])
-    lines += plt.plot(np.asarray(cov_d1), color="blue", linestyle=lstyles[0])
-    lines += plt.plot(np.asarray(cov_d2), color="blue", linestyle=lstyles[1])
-    lines += plt.plot(np.asarray(cov_d3), color="blue", linestyle=lstyles[2])
+    lines, lstyles = [], ['-', '--', '-.', ':']
+
+    # hierarchical prediction
+    if True:
+        lines += plt.plot(np.asarray(errors)[:, 0], color="red", linestyle=lstyles[0])
+        lines += plt.plot(np.asarray(errors)[:, 1], color="red", linestyle=lstyles[1])
+        lines += plt.plot(np.asarray(errors)[:, 2], color="red", linestyle=lstyles[2])
+        lines += plt.plot(np.asarray(cov_h)[:, 0], color="green", linestyle=lstyles[0])
+        lines += plt.plot(np.asarray(cov_h)[:, 1], color="green", linestyle=lstyles[1])
+        lines += plt.plot(np.asarray(cov_h)[:, 2], color="green", linestyle=lstyles[2])
+
+    # dynamical prediction
+    if True:
+        lines += plt.plot(np.asarray(errors_d1), color="black", linestyle=lstyles[0])
+        lines += plt.plot(np.asarray(errors_d2), color="black", linestyle=lstyles[1])
+        lines += plt.plot(np.asarray(errors_d3), color="black", linestyle=lstyles[2])
+        lines += plt.plot(np.asarray(cov_d1), color="blue", linestyle=lstyles[0])
+        lines += plt.plot(np.asarray(cov_d2), color="blue", linestyle=lstyles[1])
+        lines += plt.plot(np.asarray(cov_d3), color="blue", linestyle=lstyles[2])
+
+    # generalized coordinates
+    if True:
+        lines += plt.plot(np.asarray(cov_g1).mean(-1), color="yellow", linestyle=lstyles[0])
+        lines += plt.plot(np.asarray(cov_g1).mean(-1), color="yellow", linestyle=lstyles[1])
+        lines += plt.plot(np.asarray(cov_g1).mean(-1), color="yellow", linestyle=lstyles[2])
+        lines += plt.plot(np.asarray(err_g1).mean(-1), color="black", linestyle=lstyles[0])
+        lines += plt.plot(np.asarray(err_g2).mean(-1), color="black", linestyle=lstyles[1])
+        lines += plt.plot(np.asarray(err_g3).mean(-1), color="black", linestyle=lstyles[2])
+
     plt.title("Hierarchical and dynamical prediction errors")
     plt.legend(lines,
-               [f"Prediction error L{l + 1}" for l in range(3)] + [f"Error variance L{l + 1}" for l in range(3)] + [
-                   f"Dynamical prediction error L{l + 1}" for l in range(3)] + [f"Dynamical error variance L{l + 1}" for
-                                                                                l in range(3)])
+               [f"Prediction error L{l + 1}" for l in range(3)] +
+               [f"Error variance L{l + 1}" for l in range(3)] +
+               [f"Dynamical prediction error L{l + 1}" for l in range(3)] +
+               [f"Dynamical error variance L{l + 1}" for l in range(3)] +
+               [f"Generalized motion error variance L{l + 1}" for l in range(3)]+
+               [f"Generalized motion prediction error L{l + 1}"for l in range(3)])
     plt.xlabel("Update")
     plt.ylabel("Magnitude")
+    #plt.yscale("log", base=10)
     plt.show()
 
 def plot_2D(img_size=64, title="", plot=True, examples=1):
@@ -453,13 +472,13 @@ if __name__ == '__main__':
 
     VIDEO = True
     BATCH_SIZE, IMG_SIZE = 16, 16
-    LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = .1, 0.0001, 0.001, 50
+    LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = .1, 0.0001, 0.0001, 50
     train_set = MovingMNIST(root='.data/mnist', train=True, download=True,
                             transform=transforms.Compose([transforms.Scale(IMG_SIZE), transforms.ToTensor(), ]))
     train_loader = torch.utils.data.DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True)
 
     # hierarchical net with three layers
-    cause_sizes = [IMG_SIZE * IMG_SIZE, 256, 256, 256]
+    cause_sizes = [IMG_SIZE * IMG_SIZE, 128, 64, 32]
     net = GPC_net(b_size=BATCH_SIZE, dynamical_net=False,
                   cause_sizes=cause_sizes)
 
@@ -477,6 +496,7 @@ if __name__ == '__main__':
 
     # logging
     errors, cov_h, errors_d1, errors_d2, errors_d3, cov_d1, cov_d2, cov_d3 = [[] for _ in range(8)]
+    err_g1, err_g2, err_g3, cov_g1, cov_g2, cov_g3 = [[] for _ in range(6)]
     vid_in, vid_p1, vid_p2, vid_p3 = [], [], [], []
 
     for seq_id, (seq, _) in enumerate(train_loader):
@@ -486,15 +506,20 @@ if __name__ == '__main__':
 
             # step hierarchical net
             e, _, ch, _ = net.iterative_inference(data, updates=UPDATES)
-            errors, cov_h = errors+e, cov_h+ch
 
             # step dynamical nets  # todo include hidden states
-            _, ed1, _, cd1 = net_d1.iterative_inference(updates=UPDATES)
-            _, ed2, _, cd2 = net_d2.iterative_inference(updates=UPDATES)
-            _, ed3, _, cd3 = net_d3.iterative_inference(updates=UPDATES)
-            errors_d1, cov_d1 = errors_d1+ed1, cov_d1+cd1
-            errors_d2, cov_d2 = errors_d2+ed2, cov_d2+cd2
-            errors_d3, cov_d3 = errors_d3+ed3, cov_d3+cd3
+            eg1, ed1, cg1, cd1 = net_d1.iterative_inference(updates=UPDATES)
+            eg2, ed2, cg2, cd2 = net_d2.iterative_inference(updates=UPDATES)
+            eg3, ed3, cg3, cd3 = net_d3.iterative_inference(updates=UPDATES)
+
+            # logging
+            errors, cov_h = errors + e, cov_h + ch
+            errors_d1, cov_d1 = errors_d1 + ed1, cov_d1 + cd1
+            errors_d2, cov_d2 = errors_d2 + ed2, cov_d2 + cd2
+            errors_d3, cov_d3 = errors_d3 + ed3, cov_d3 + cd3
+            err_g1, cov_g1 = err_g1 + eg1, cov_g1 + cg1
+            err_g2, cov_g2 = err_g2 + eg2, cov_g2 + cg2
+            err_g3, cov_g3 = err_g3 + eg3, cov_g3 + cg3
 
             # track state motion
             [n.transition() for n in [net, net_d1, net_d2, net_d3]]
@@ -509,6 +534,7 @@ if __name__ == '__main__':
 
             if id % 1 == 0:
                 print(id, np.asarray(errors)[-1].mean())
+                break
         if seq_id == 0: break
 
     # Overview plots
