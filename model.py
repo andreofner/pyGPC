@@ -1,7 +1,6 @@
 """
 Differentiable Generalized Predictive Coding
 André Ofner 2021
-Hierarchical-dynamical prediction of local and global trajectories on Moving MNIST
 """
 
 import torch
@@ -11,13 +10,13 @@ from torch.nn import Parameter as P
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 
-from pyGPC.MovingMNIST import *
+from MovingMNIST import *
 
 plt.style.use(['seaborn'])
 
 VIDEO = True
-BATCH_SIZE, IMG_SIZE = 16, 16
-LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = .01, 0.001, 0.0001, 10
+BATCH_SIZE, IMG_SIZE = 64, 8
+LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = .01, 0.01, .00001, 3
 
 def plot_graph(errors, errors_d1, errors_d2, errors_d3, cov_d1, cov_d2, cov_d3,cov_g1,
            cov_g2, cov_g3, err_g1, err_g2, err_g3, err_h1, err_h2, err_h3,cov_h,
@@ -39,25 +38,25 @@ def plot_graph(errors, errors_d1, errors_d2, errors_d3, cov_d1, cov_d2, cov_d3,c
     # dynamical prediction
     if dynamical:
         lines += plt.plot(np.asarray(errors_d1), color="black", linestyle=lstyles[0])
-        lines += plt.plot(np.asarray(errors_d2), color="black", linestyle=lstyles[1])
-        lines += plt.plot(np.asarray(errors_d3), color="black", linestyle=lstyles[2])
+        #lines += plt.plot(np.asarray(errors_d2), color="black", linestyle=lstyles[1])
+        #lines += plt.plot(np.asarray(errors_d3), color="black", linestyle=lstyles[2])
         lines += plt.plot(np.asarray(cov_d1), color="blue", linestyle=lstyles[0])
-        lines += plt.plot(np.asarray(cov_d2), color="blue", linestyle=lstyles[1])
-        lines += plt.plot(np.asarray(cov_d3), color="blue", linestyle=lstyles[2])
-        labels += [f"Dynamical prediction error L{l + 1}" for l in range(3)]
-        labels += [f"Dynamical error variance L{l + 1}" for l in range(3)]
+        #lines += plt.plot(np.asarray(cov_d2), color="blue", linestyle=lstyles[1])
+        #lines += plt.plot(np.asarray(cov_d3), color="blue", linestyle=lstyles[2])
+        labels += [f"Dynamical prediction error L{l + 1}" for l in range(1)]
+        labels += [f"Dynamical error variance L{l + 1}" for l in range(1)]
 
     # generalized coordinates
     if g_coords:
         # cause states # todo plot separately for each coordinate
         lines += plt.plot(np.asarray(cov_g1).mean(-1), color="grey", linestyle=lstyles[0])
-        lines += plt.plot(np.asarray(cov_g1).mean(-1), color="grey", linestyle=lstyles[1])
-        lines += plt.plot(np.asarray(cov_g1).mean(-1), color="grey", linestyle=lstyles[2])
+        #lines += plt.plot(np.asarray(cov_g1).mean(-1), color="grey", linestyle=lstyles[1])
+        #lines += plt.plot(np.asarray(cov_g1).mean(-1), color="grey", linestyle=lstyles[2])
         lines += plt.plot(np.asarray(err_g1).mean(-1), color="orange", linestyle=lstyles[0])
-        lines += plt.plot(np.asarray(err_g2).mean(-1), color="orange", linestyle=lstyles[1])
-        lines += plt.plot(np.asarray(err_g3).mean(-1), color="orange", linestyle=lstyles[2])
-        labels += [f"Cause motion error variance L{l + 1}" for l in range(3)]
-        labels += [f"Cause motion prediction error L{l + 1}" for l in range(3)]
+        #lines += plt.plot(np.asarray(err_g2).mean(-1), color="orange", linestyle=lstyles[1])
+        #lines += plt.plot(np.asarray(err_g3).mean(-1), color="orange", linestyle=lstyles[2])
+        labels += [f"Cause motion error variance L{l + 1}" for l in range(1)]
+        labels += [f"Cause motion prediction error L{l + 1}" for l in range(1)]
 
         # hidden states # todo plot separately for each coordinate
         #lines += plt.plot(np.asarray(cov_g1).mean(-1), color="brown", linestyle=lstyles[0])
@@ -65,10 +64,10 @@ def plot_graph(errors, errors_d1, errors_d2, errors_d3, cov_d1, cov_d2, cov_d3,c
         #lines += plt.plot(np.asarray(cov_g1).mean(-1), color="brown", linestyle=lstyles[2])
         # todo include covariance of hidden state motion
         lines += plt.plot(np.asarray(err_h1).mean(-1), color="olive", linestyle=lstyles[0])
-        lines += plt.plot(np.asarray(err_h2).mean(-1), color="olive", linestyle=lstyles[1])
-        lines += plt.plot(np.asarray(err_h3).mean(-1), color="olive", linestyle=lstyles[2])
+        #lines += plt.plot(np.asarray(err_h2).mean(-1), color="olive", linestyle=lstyles[1])
+        #lines += plt.plot(np.asarray(err_h3).mean(-1), color="olive", linestyle=lstyles[2])
         #labels += [f"Generalized hidden motion error variance L{l + 1}" for l in range(3)]
-        labels += [f"Hidden motion prediction error L{l + 1}" for l in range(3)]
+        labels += [f"Hidden motion prediction error L{l + 1}" for l in range(1)]
 
 
     plt.title("Hierarchical and dynamical prediction errors")
@@ -127,7 +126,7 @@ def plot_2D(net, img_size=64, title="", plot=True, examples=1):
 
 
 class GPC_state(torch.nn.Module):
-    def __init__(self, b_size, n_states, g_coords, full_covar=False, var_prior=1., covar_prior=100000.):
+    def __init__(self, b_size, n_states, full_covar=False, var_prior=1., covar_prior=100000.):
         """
         Cause and hidden states of a layer
         """
@@ -135,9 +134,9 @@ class GPC_state(torch.nn.Module):
 
         # cause states and hidden states
         self.register_parameter(name="cause_state",
-                                param=P(torch.ones([b_size, n_states * g_coords]).requires_grad_()))
+                                param=P(torch.ones([b_size, n_states]).requires_grad_()))
         self.register_parameter(name="hidd_state",
-                                param=P(torch.ones([b_size, n_states * g_coords]).requires_grad_()))
+                                param=P(torch.ones([b_size, n_states]).requires_grad_()))
         torch.nn.init.xavier_uniform_(self.cause_state)  # initialize with random prior
         torch.nn.init.xavier_uniform_(self.hidd_state)  # initialize with random prior
 
@@ -184,9 +183,16 @@ class GPC_state(torch.nn.Module):
 
         return self.cause_change, self.hidd_change
 
-    def predstate(self, n_states_h=None, g_coords_h=None, n_states_d=None, g_coords_d=None):
+    def predstate(self, n_states_h=None, n_states_d=None, priors=None, dynamical=False):
         # View on subset of states used for outgoing prediction
-        return [self.cause_state[:, :(n_states_h * g_coords_h)], self.hidd_state[:, :(n_states_d * g_coords_d)]]
+
+        if priors is not None:
+            if dynamical:  # use priors[0] instead of cause state & priors[1] instead of hidden state
+                return [priors[0].detach()[:, :n_states_h], priors[1].detach()[:, :n_states_d]]
+            else:  # use priors instead of cause state
+                return [priors.detach()[:, :n_states_h], self.hidd_state[:, :n_states_d]]
+
+        return [self.cause_state[:, :n_states_h], self.hidd_state[:, :n_states_d]]
 
     def precision(self):
         # Precision is the inverse of the estimated error covariance
@@ -194,29 +200,33 @@ class GPC_state(torch.nn.Module):
 
 
 class GPC_layer(torch.nn.Module):
-    def __init__(self, h_states=1, d_states=0, g_coords=1, lower=None, b_size=1, protect_states=True, dynamical=True):
+    def __init__(self, h_states=1, d_states=0, lower=None, b_size=1, protect_states=True, dynamical=True,
+                 n_predstates_h=None, n_predstates_d=None):
         """
         Generalized predictive coding layer
         """
         super().__init__()
 
         self.dynamical = dynamical
-
-        # lower GPC layer
-        self.lower = lower
-
-        # layer settings
+        self.lower = lower # lower GPC layer
         self.protect_states = protect_states  # don't overwrite lower cause states when predicting
-        self.g_coords = g_coords  # highest order of encoded state motion # todo remove
         self.n_cause_states = h_states  # observable part of states
         self.n_hidd_states = d_states  # unobservable part of states
-        self.n_predstates_h = self.n_cause_states   # amount of cause states used for outgoing prediction
-        self.n_predstates_d = self.n_hidd_states   # amount of hidden states used for outgoing prediction
         self.n_states = self.n_hidd_states + self.n_cause_states
-
-        self.states = GPC_state(b_size, self.n_cause_states, self.g_coords) # cause and hidden states x, v
+        self.states = GPC_state(b_size, self.n_cause_states) # cause and hidden states x, v
         self.pred = None  # outgoing prediction
         self.net_h = None
+
+        # select amount of cause & hidden units used for prediction
+        if not self.dynamical:
+            self.n_predstates_h = self.n_cause_states*0   # amount of cause states used for outgoing prediction
+            self.n_predstates_d = self.n_hidd_states//2  # amount of hidden states used for outgoing prediction
+        else:
+            self.n_predstates_h = n_predstates_h   # amount of cause states used for outgoing prediction
+            self.n_predstates_d = n_predstates_d   # amount of hidden states used for outgoing prediction
+            # default: all cause & hidden units are used for prediction
+            if n_predstates_h is None: self.n_predstates_h = self.n_cause_states
+            if n_predstates_d is None: self.n_predstates_d = self.n_hidd_states
 
         # hierarchical weights
         if self.lower is not None:
@@ -225,21 +235,27 @@ class GPC_layer(torch.nn.Module):
                                          self.lower.n_cause_states, False)
             if self.dynamical:
                 # weights for generalized coordinates of cause motion
-                self.net_h = torch.nn.Linear(self.n_predstates_h, self.lower.n_cause_states, False)
+                #self.net_h = torch.nn.Linear(self.n_predstates_h, self.lower.n_cause_states, False) # full connectivity
+                self.net_h_cause = torch.ones_like(self.lower.states.cause_state).requires_grad_()
+                torch.nn.init.xavier_uniform_(self.net_h_cause)
 
                 # weights for generalized coordinates of hidden motion
-                self.net_h_hidden = torch.nn.Linear(self.n_predstates_d, self.lower.n_hidd_states, False)
-
-        # dynamical weights couple state motion
-        self.net_d = torch.nn.Linear(self.n_cause_states, self.n_cause_states, False)
+                #self.net_h_hidden = torch.nn.Linear(self.n_predstates_d, self.lower.n_hidd_states, False) # full connectivity
+                self.net_h_hidden = torch.ones_like(self.lower.states.hidd_state).requires_grad_()
+                torch.nn.init.xavier_uniform_(self.net_h_hidden)
 
         # parameter groups and optimizers
         self.opts = []
-        self.params_weight = torch.nn.ModuleList([self.net_d, self.net_h])
-        self.opts.append(torch.optim.SGD(self.params_weight.parameters(), lr=LR_WEIGHTS))  # hierarchical weights
+        if self.dynamical:
+            if self.lower is not None:
+                self.opts.append(torch.optim.SGD([self.net_h_cause, self.net_h_hidden], lr=LR_WEIGHTS))  # hierarchical weights
+        else:
+            if self.lower is not None:
+                self.opts.append(torch.optim.SGD(self.net_h.parameters(), lr=LR_WEIGHTS))  # hierarchical weights
+
         self.opts.append(torch.optim.SGD(self.states.params_state, lr=LR_STATES))  # states used for prediction
         self.opts.append(torch.optim.SGD(self.states.params_covar, lr=LR_PRECISION))  # states used for prediction
-        if self.lower is not None: # states receiving the prediction
+        if self.lower is not None:  # states receiving the prediction
             self.opts.append(torch.optim.SGD(self.lower.states.params_state, lr=LR_STATES))
             self.opts.append(torch.optim.SGD(self.lower.states.params_covar, lr=LR_PRECISION))
 
@@ -250,30 +266,40 @@ class GPC_layer(torch.nn.Module):
     def forward(self, prior=None):
         """
         Hierarchical prediction
+
+        In hierarchical nets:
+            Turns (trajectories of) predictions from states into the prior states of the next lower layer
+        In dynamical nets:
+            Hierarchically predicts the local trajectory (generalized coordinates of a state's motion)
         """
 
         # [causes, units] used for predictions
-        predstate = self.states.predstate(n_states_h=self.n_predstates_h, g_coords_h=self.g_coords,
-                                       n_states_d=self.n_predstates_d, g_coords_d=self.g_coords)
-
-        # optionally overwrite cause prior used for prediction
-        if prior is not None:
-            predstate[0] = prior.detach()
+        predstate = self.states.predstate(n_states_h=self.n_predstates_h, n_states_d=self.n_predstates_d,
+                                          priors=prior, dynamical=self.dynamical)
 
         if self.dynamical:
-            self.pred_h = self.net_h(predstate[0])
-            self.pred_d = self.net_h_hidden(predstate[1])
+            # 1:1 connectivity (#weights = output size)
+            #self.pred_h = self.net_h(predstate[0]) # full connectivity (#weights=input size * output size )
+            #self.pred_d = self.net_h_hidden(predstate[1])
+            self.pred_h = self.net_h_cause * predstate[0]
+            self.pred_d = self.net_h_hidden * predstate[1]
+
         else:
             self.pred = self.net_h(torch.cat(predstate, 1))
 
         # optionally overwrite cause state in lower layer with is prediction
         if not self.protect_states:
-            self.lower.states.cause_state = P(self.pred.detach())
+            if self.dynamical:
+                # todo select between cause/hiddens or remove
+                self.lower.states.cause_state = P(self.pred_h.detach())
+                self.lower.states.hidd_state = P(self.pred_d.detach())
+            else:
+                self.lower.states.cause_state = P(self.pred.detach())
 
         if self.dynamical:
             return self.pred_h.detach(), self.pred_d.detach() # todo
-
-        return self.pred.detach()
+        else:
+            return self.pred.detach()
 
 
     def infer(self, learn_covar=False, predict_change=True):
@@ -366,7 +392,7 @@ class GPC_net(torch.nn.Module):
                                      h_states=cause_sizes[3], d_states=hidden_sizes[3], dynamical=self.dynamical_net)
         self.layers = [self.g_observation, self.output_layer, self.hidden_layer, self.cause_layer]
 
-        # summary of cause and hidden states in all layers
+        # summary of cause and hidden states in all layers # todo remove?
         self.cause_state, self.hidd_state = [], []
         for l, layer in enumerate(self.layers):
             self.cause_state.append(layer.states.cause_state)
@@ -419,7 +445,7 @@ class GPC_net(torch.nn.Module):
         if prior is not None:
             self.cause_layer.states.cause_state = P(prior)
 
-    def transition(self):
+    def state_diff(self):
         """
         Compute difference between current and previous state
         """
@@ -437,12 +463,14 @@ class GPC_net(torch.nn.Module):
         """
         keeps = [l.protect_states for l in self.layers] # save setting
         for l in self.layers[2:]:
-            l.protect_states = True  # don't change the network
+            l.protect_states = True  # default: don't change the network
         for layer in reversed(self.layers[1:start_layer]):
             prior = layer.forward(prior)
         pred = self.g_observation.to_discrete(prior)
         for i, l in enumerate(self.layers):
             l.protect_states = keeps[i]  # reset setting
+        if self.dynamical_net:
+            return [p.detach().numpy() for p in pred]
         return pred.detach().numpy()
 
     def iterative_inference(self, data=None, target=None, updates=30):
@@ -455,21 +483,47 @@ class GPC_net(torch.nn.Module):
         errors, errors_hidden, errors_d, cov_h, cov_d = [], [], [], [], []
         for i in range(updates):
             self.feed(data, target)  # feed data and targets
-            pred = self.forward()  # hierarchical prediction
-            if self.dynamical_net:
-                err_d, cd = self.forward_dynamical()  # dynamical prediction
-                errors_d.append(err_d); cov_d.append(cd)
+            self.forward()  # hierarchical prediction
+            #if self.dynamical_net:  # todo activate
+            #    err_d, cd = self.forward_dynamical()  # dynamical prediction
+            #    errors_d.append(err_d); cov_d.append(cd)
             err, err_hidd, ch, _ = self.infer(new_datapoint=(i == 0))  # todo remove dynamical covar
             errors.append(err); errors_hidden.append(err_hidd); cov_h.append(ch);
         return errors, errors_hidden, errors_d, cov_h, cov_d
 
-    def predict_dynamical(self):
+    def predict_dynamical(self, overwrite=False, apply_dynamics=False):
         """
         Dynamical prediction through all layers
         """
         cause = torch.cat(self.cause_state, 1)  # cause states from all layers
         hidden = torch.cat(self.hidd_state, 1)  # hidden states from all layers
         pred = self.net_d(torch.cat([cause, hidden], 1))  # predicted hidden state motion
+
+        # overwrite the hidden state motion
+        if overwrite:
+
+            if apply_dynamics: # todo fix
+                #  split the prediction (concatenated state motion states)
+                pos, motion_splits, splits = 0, [],  [c.shape[-1] for c in self.hidd_state[1:]]
+                for i in range(len(splits)):
+                    motion_splits.append(pred[:, pos:pos+splits[i]].detach())
+                    pos += splits[i]
+
+                self.layers[1].states.hidd_state = P(motion_splits[0])
+                self.layers[2].states.hidd_state = P(motion_splits[1])
+                self.layers[3].states.hidd_state = P(motion_splits[2])
+                self.hidd_state[1:] = motion_splits # todo fix duplicate
+
+            # decode the expected hidden state motion
+            predstate = self.layers[1].states.predstate(self.layers[1].n_predstates_h, self.layers[1].n_predstates_d)
+
+            # add predicted motion to hidden state
+            #self.layers[0].states.hidd_state = P(self.layers[0].states.hidd_state + self.layers[1].net_h_hidden(predstate[1])) # state + predicted state change
+            #self.hidd_state[0] = self.layers[0].states.hidd_state # todo fix duplicate
+
+
+        if self.dynamical_net:
+            return self.hidd_state[0]# [p.detach() for p in pred]
         return pred.detach()
 
     def forward_dynamical(self):
