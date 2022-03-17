@@ -7,14 +7,14 @@ import matplotlib.pyplot as plt
 from MovingMNIST import *
 plt.style.use(['seaborn'])
 
-# hyper parameters for circles dataset
+# circles dataset:
 BATCH_SIZE, IMG_SIZE = 1, 2
-LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = 0.1, .001, 0., 10
+LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = 0.1, .01, 0., 10
 LR_SCALE = 0  # learning rate of states receiving prediction (regularization)
 LR_SCALE_DYN = 0
 ONE_TO_ONE = True  # generalized coordinates per unit or across units
 VERBOSE = False
-PRED_SPLIT = 8
+PRED_SPLIT = 64
 
 def plot_graph(errors, errors_d1, errors_d2, errors_d3, cov_d1, cov_d2, cov_d3,cov_g1,
            cov_g2, cov_g3, err_g1, err_g2, err_g3, err_h1, err_h2, err_h3,cov_h,
@@ -620,8 +620,9 @@ class GPC_net(torch.nn.Module):
 
         pred_coords = []
         for l in range(len(self.layers[:-1])):
-            opt_states = torch.optim.SGD([self.layers[l].states.cause_state, self.layers[l].states.hidd_state,
-                                          self.layers[l+1].states.hidd_state], lr=LR_STATES) # todo fix LR
+            opt_states = torch.optim.SGD([self.layers[l].states.cause_state,
+                                          self.layers[l].states.hidd_state,
+                                          self.layers[l+1].states.hidd_state], lr=0.01) # todo fix LR
             opt_weights = torch.optim.SGD(self.nets_d[l].parameters(), lr=LR_WEIGHTS) # todo fix LR
             opt_states.zero_grad()
             opt_weights.zero_grad()
@@ -635,11 +636,7 @@ class GPC_net(torch.nn.Module):
                 target = self.layers[l+1].states.hidd_state  # x'
 
                 # Dynamical prediction
-                # x_dot - DX    =    x_dot - x'    =    (x(t+1) - x(t)) - x'(t)
-                # x(t+1) = x + f(x(t)) where f(x(t)) encodes the applied change to x
-                # This is a simple Neural ODE based on a dense layer + residual connection, but without recurrent connections
-                # Instead predicting recurrent dynamics we make a single prediction in generalised coordinates, i.e. a use a static model
-                err = ((pred - input_hidden) - target).abs().unsqueeze(-1)
+                err = (pred - target).abs().unsqueeze(-1)
                 error = (err * self.covars_d[l]**-1 * err).squeeze()
                 error.backward(gradient=torch.ones_like(error))
 
@@ -660,4 +657,4 @@ class GPC_net(torch.nn.Module):
         if predict_only:
             return pred_coords
 
-        return err_out, covar_out 
+        return err_out, covar_out # todo return for all layers
