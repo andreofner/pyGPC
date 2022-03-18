@@ -17,7 +17,7 @@ LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = 0.1, .0, 0., 30
 LR_SCALE = 0  # learning rate of states receiving prediction (regularization)
 
 # dynamical LR (for hidden layers operating on generalized state coordinates)
-LR_WEIGHTS_DYN = 0.1
+LR_WEIGHTS_DYN = 0.
 LR_STATES_DYN = 0.
 
 # generalized coordinates LR (for sensory layer operating on discrete sequential data)
@@ -87,7 +87,7 @@ def plot_2D(net, img_size=64, title="", plot=True, examples=1):
     if plot: fig, axs = plt.subplots(examples, 4)
     preds = []
     for example in range(examples):
-        for ax, start_layer in enumerate(reversed(range(2, 3))): # todo  5
+        for ax, start_layer in enumerate(reversed(range(2, 3))): # todo fixme 5
             pred = net.predict_from(start_layer=start_layer)
             if plot:
                 axs[example, ax].imshow(pred[example].reshape([img_size, img_size]))
@@ -258,10 +258,9 @@ class GPC_layer(torch.nn.Module):
                 else:
                     self.net_h_hidden = torch.ones_like(self.lower.states.hidd_state).requires_grad_()
 
-
-        # each hierarchical layer has a dynamical network that
-        # - encodes states in generalized coordinates (state x, state change x', change of state change x'', ...)
-        # - couples orders of generalized motion via dynamical weights (x->x', x'->x'', ...)
+        # each hierarchical layer has a dynamical network
+        # in sensory layer: encodes states in generalized coordinates (state x, state change x', change of state change x'', ...)
+        # in hidden layers: couples orders of generalized motion via dynamical weights (x->x', x'->x'', ...)
         if not self.dynamical:
             self.dyn_model = GPC_net(b_size=BATCH_SIZE, dynamical_net=True, obs_layer=self,
                                      cause_sizes=[self.n_cause_states for _ in range(self.gc)],
@@ -643,9 +642,6 @@ class GPC_net(torch.nn.Module):
                 error = (err * self.covars_d[l]**-1 * err).squeeze()
                 error.backward(gradient=torch.ones_like(error))
 
-                if l == 0:
-                    print("err: ", err.detach()[0,0], "w:", self.nets_d[l].weight.data, "weights grad", self.nets_d[l].weight.grad.data,)
-
                 opt_states.step()
                 opt_weights.step()
 
@@ -663,4 +659,4 @@ class GPC_net(torch.nn.Module):
         if predict_only:
             return pred_coords
 
-        return err_out, covar_out # todo return for all layers
+        return err_out, covar_out
