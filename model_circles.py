@@ -8,7 +8,6 @@ from MovingMNIST import *
 plt.style.use(['seaborn'])
 
 # hyper parameters for circles dataset
-BATCH_SIZE, IMG_SIZE = 1, 1
 WEIGHTS_SHARING = True  # share weights between generalized coords in hierarchical prediction
 PROTECT_STATES = True  # overwrite of cause states with their prediction
 ONE_TO_ONE = True  # encode generalized coordinates independently per unit
@@ -273,7 +272,7 @@ class GPC_layer(torch.nn.Module):
         # in sensory layer: encodes states in generalized coordinates (state x, state change x', change of state change x'', ...)
         # in hidden layers: couples orders of generalized motion via dynamical weights (x->x', x'->x'', ...)
         if not self.dynamical:
-            self.dyn_model = GPC_net(b_size=BATCH_SIZE, dynamical_net=True, obs_layer=self,
+            self.dyn_model = GPC_net(b_size=b_size, dynamical_net=True, obs_layer=self,
                                      cause_sizes=[self.n_cause_states for _ in range(self.gc)],
                                      hidden_sizes=[self.n_hidd_states for _ in range(self.gc)])
 
