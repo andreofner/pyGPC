@@ -177,7 +177,7 @@ class GPC_state(torch.nn.Module):
         # Return the full state [causes, hiddens]
         return self.state
 
-    def change(self, step=False, dt=1.):
+    def change(self, step=False, dt=.1):
         """
         Compute difference between current and previous states
         step: new datapoint
@@ -190,17 +190,10 @@ class GPC_state(torch.nn.Module):
             self.hidd_previous = self.hidd_state.clone().detach()
         return self.cause_change, self.hidd_change
 
-    def predstate(self, n_states_h=None, n_states_d=None, priors=None, dynamical=False):
+    def predstate(self, n_states_h=None, n_states_d=None, dynamical=False):
         """
         View on subset of states used for outgoing prediction
         """
-
-        if priors is not None:
-            if dynamical:  # use priors[0] instead of cause state & priors[1] instead of hidden state
-                return [priors[0].detach()[:, :n_states_h], priors[1].detach()[:, :n_states_d]]
-            else:  # use priors instead of cause state
-                return [priors.detach()[:, :n_states_h], self.hidd_state[:, :n_states_d]]
-
         return [self.cause_state[:, :n_states_h], self.hidd_state[:, :n_states_d]]
 
 
@@ -230,9 +223,19 @@ class GPC_layer(torch.nn.Module):
         if not self.dynamical:
             self.n_predstates_h = 0 # amount of cause states used for outgoing prediction
             self.n_predstates_d = min(n_predstates_d, PRED_SPLIT)  # amount of hidden states used for outgoing prediction
+
+            # static layer: activate skip connection from top-down input to prediction (D matrix in SSM)
+            # when there are no hidden states to perturb
+            if self.n_predstates_d == 0:
+                self.n_predstates_h = self.n_cause_states # todo adaptive size?
+
             if n_predstates_h is None: # default: all cause & hidden units are used for prediction
                 self.n_predstates_h = 0
                 self.n_predstates_d = min(self.n_hidd_states, PRED_SPLIT)
+
+                # static layer, see above
+                if self.n_predstates_d == 0:
+                    self.n_predstates_h = self.n_cause_states  # todo adaptive size?
         else: # is dynamical layer
             if not ONE_TO_ONE:
                 self.n_predstates_h = self.n_cause_states
@@ -322,7 +325,7 @@ class GPC_layer(torch.nn.Module):
         return self.parameters(recurse=recurse)
 
 
-    def forward(self, prior=None, use_gen_coords=False):
+    def forward(self, overwrite=False):
         """
         Hierarchical prediction
         """
@@ -330,7 +333,7 @@ class GPC_layer(torch.nn.Module):
         if self.dynamical:
             # [causes, hiddens] used for prediction
             predstate = self.states.predstate(n_states_h=self.n_predstates_h, n_states_d=self.n_predstates_d,
-                                              priors=prior, dynamical=self.dynamical)
+                                              dynamical=self.dynamical)
             if not ONE_TO_ONE:
                 self.pred_h = self.net_h_cause(predstate[0]) # full connectivity (#weights=input size * output size )
                 self.pred_d = self.net_h_hidden(predstate[1])
@@ -344,9 +347,14 @@ class GPC_layer(torch.nn.Module):
             for gen_coord in range(self.gc):
                 dyn_layer = self.dyn_model.layers[gen_coord]
                 predstate = dyn_layer.states.predstate(n_states_h=self.n_predstates_h,
-                                                  n_states_d=self.n_predstates_d,
-                                                  priors=None, dynamical=False)  # input state coordinate
-                self.pred.append(self.net_h[gen_coord](torch.cat(predstate, 1)))  # output state coordinate
+                                                       n_states_d=self.n_predstates_d,
+                                                       dynamical=False)  # input state coordinate
+                pred = self.net_h[gen_coord](torch.cat(predstate, 1))
+
+                if overwrite: # replace target cause by its prediction
+                    self.lower.dyn_model.layers[gen_coord].states.cause_state = pred.detach()
+
+                self.pred.append(pred)  # output state coordinate
 
         if self.dynamical:
             return self.pred_h.detach(), self.pred_d.detach()  # todo
@@ -378,8 +386,8 @@ class GPC_layer(torch.nn.Module):
                 err = 0.
                 for gen_coord in range(self.gc):
                     target = self.lower.dyn_model.layers[gen_coord].states.cause_state
-                    if gen_coord > 0: target = target*10 # todo selectable dt scaling
-                    err = err + (self.pred[gen_coord] - target).abs().unsqueeze(-1)
+                    #if gen_coord > 0: target = target*10 # todo selectable dt scaling
+                    err = err + (self.pred[gen_coord] - target).abs().unsqueeze(-1) # todo MSE?
                 error = (err * self.lower.states.cause_covar_slow**-1 * err).squeeze() # todo precision weighting for each dynamical state
                 error.backward(gradient=torch.ones_like(error))
 
@@ -414,8 +422,7 @@ class GPC_layer(torch.nn.Module):
 
 
 class GPC_net(torch.nn.Module):
-    def __init__(self, b_size=1, dynamical_net=True, var_prior=1.,
-                 cause_sizes=[32,32,32,32], hidden_sizes=[0,0,0,0], obs_layer=None, gen_coords=5):
+    def __init__(self, b_size=1, dynamical_net=True, var_prior=1., cause_sizes=[32,32,32,32], hidden_sizes=[0,0,0,0], obs_layer=None, gen_coords=5):
         """
         Generalized predictive coding network
         """
@@ -464,13 +471,13 @@ class GPC_net(torch.nn.Module):
                 self.nets_d.append(net_d) # dynamical weights
                 self.covars_d.append(torch.tensor([var_prior]).requires_grad_()) # dynamical error covariance
 
-    def forward(self, use_gen_coords=False):
+    def forward(self):
         """
         Hierarchical prediction through all layers
         """
         for l in reversed(range(len(self.layers))):
             if l > 0:  # input layer has no lower layer to predict
-                self.layers[l].forward(use_gen_coords=use_gen_coords)
+                self.layers[l].forward()
         return self.output_layer.pred
 
     def infer(self):
@@ -496,14 +503,14 @@ class GPC_net(torch.nn.Module):
         if prior is not None:
             self.layers[-1].states.cause_state = prior
 
-    def state_diff(self, step=False, dt=1.):
+    def state_diff(self, step=False, dt=.1):
         """
         Compute difference between current and previous state
         """
         for i, l in enumerate(self.layers):
             l.states.change(step=step, dt=dt)
 
-    def predict_from(self, prior=None, protect_states=True, start_layer=-1, use_gen_coords=False):
+    def predict_from_(self, protect_states=True, overwrite=False, start_layer=-1):
         """
         Hierarchical prediction through selected layers
         """
@@ -511,12 +518,20 @@ class GPC_net(torch.nn.Module):
         for l in self.layers[2:]:
             l.protect_states = protect_states  # default: don't change the network
         for layer in reversed(self.layers[1:start_layer]):
-            prior = layer.forward(prior, use_gen_coords=use_gen_coords)
+            pred = layer.forward(overwrite=overwrite)
         for i, l in enumerate(self.layers):
             l.protect_states = keeps[i]  # reset setting
         if self.dynamical_net:
-            return [p.detach().numpy() for p in prior]
-        return [p.detach().numpy() for p in prior]
+            return [p.detach().numpy() for p in pred]
+        return [p.detach().numpy() for p in pred]
+
+    def predict_from(self, overwrite=False, start_layer=-1):
+        """
+        Hierarchical prediction through all layers
+        """
+        for layer in reversed(self.layers[1:]):
+            pred = layer.forward(overwrite=overwrite)
+        return [p.detach().numpy() for p in pred]
 
     def iterative_inference(self, data=None, target=None, updates=1, predict_hierarchical=True):
         """
@@ -628,7 +643,7 @@ class GPC_net(torch.nn.Module):
 
         return [layer.states.cause_state.detach()[0].numpy() for layer in self.layers]
 
-    def forward_dynamical(self, apply=False, dt=1.):
+    def forward_dynamical(self, apply=False, apply_encoding=False, dt=1.):
         """
         Dynamical prediction and optimization between all dynamical layers in a hierarchical layer
         This couples orders of state motion: x' = f(x,v), x'' = f'(x',v'), ...
@@ -655,7 +670,7 @@ class GPC_net(torch.nn.Module):
 
             if not apply:
                 # Dynamical prediction error
-                err = ((pred - target)**2).mean(-1).unsqueeze(-1).unsqueeze(-1) # todo MSE?
+                err = ((pred - target)**2).mean(-1).unsqueeze(-1)#.mean(-1).unsqueeze(-1).unsqueeze(-1) # todo MSE?
                 error = err # (err * self.covars_d[l]**-1 * err).squeeze()
                 error.backward(gradient=torch.ones_like(error))
                 opt_states.step()
@@ -669,11 +684,12 @@ class GPC_net(torch.nn.Module):
                 if l == 0:
                     err_out = error.mean().detach().numpy()
                     covar_out = self.covars_d[l].mean().detach().numpy()
-            else:  # overwrite with prediction
-                #self.layers[l].states.hidd_state = (self.layers[l].states.hidd_state + pred*dt).detach() # x_(t+1) = x_t + f(x)
-                #if l == 0: print("x'", self.layers[l+1].states.hidd_state[0])
-                self.layers[l+1].states.hidd_state = pred.detach() # x_(t+1) = x_t + f(x)
-                #if l == 0:print("Predicted x'", self.layers[l+1].states.hidd_state[0])
-                #if l == 0:print("---")
+            else:  # apply predicted state motion to the state
+                # todo apply cause motion here too?
+                self.layers[l].states.hidd_state = self.layers[l].states.hidd_state.detach() + pred.detach() * dt
+
+                if apply_encoding: # overwrite encoded motion with predicted motion
+                    self.layers[l+1].states.hidd_state = pred.detach()# * dt
+
         if not apply:
             return err_out, covar_out
