@@ -4,6 +4,8 @@ André Ofner 2021
 """
 
 import matplotlib.pyplot as plt
+import torch.nn
+
 from MovingMNIST import *
 plt.style.use(['seaborn'])
 
@@ -11,19 +13,59 @@ plt.style.use(['seaborn'])
 WEIGHTS_SHARING = True  # share weights between generalized coords in hierarchical prediction
 PROTECT_STATES = True  # overwrite of cause states with their prediction
 ONE_TO_ONE = True  # encode generalized coordinates independently per unit
-PRED_SPLIT = 32  # hidden units to use for outgoing prediction. remaining units are memory
+PRED_SPLIT = 256  # hidden units to use for outgoing prediction. remaining units are memory
+ACT_h = torch.nn.Tanh()  # activation of hierarchical predictions
+ACT_d = torch.nn.Tanh() # activation of dynamical predictions
+PREDICT_COORDS = True
 
 # hierarchical LR (for hidden layers operating on generalized state coordinates)
-LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = .1, .00, 0., 1
-LR_SCALE = 0  # learning rate of states receiving prediction (regularization)
+LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = .1, .001, 0., 1
+LR_SCALE = 1  # learning rate of states receiving prediction (regularization)
 
 # dynamical LR (for hidden layers operating on generalized state coordinates)
 LR_WEIGHTS_DYN = LR_WEIGHTS  # optimize dynamics towards observed state motion
 LR_STATES_DYN = LR_STATES  # optimize state motion towards learned dynamics
 
-# generalized coordinates LR (for sensory layer operating on discrete sequential data)
-LR_SCALE_DYN = 0  # learning rate of states receiving prediction (regularization)
+def plot_sensory_coords(net, data, IMG_SIZE=16):
+    fig, axs = plt.subplots(1, len(net.layers[0].dyn_model.layers)+1)
+    for i, layer in enumerate(net.layers[0].dyn_model.layers):
+        sens1 = layer.states.cause_state[0].detach()
+        axs[i].imshow(sens1.reshape([IMG_SIZE, IMG_SIZE]))
+        axs[i].set_title(f"Encoded GC {i+1}")
+    axs[-1].imshow(data[0].data.reshape([IMG_SIZE,IMG_SIZE]))
+    axs[-1].set_title("Observation")
+    plt.show()
 
+def plot_2D_coords(pred, IMG_SIZE=16):
+    if len(pred) == 1:
+        plt.imshow(pred[0][0].reshape([IMG_SIZE,IMG_SIZE]))
+        plt.title("Prediction")
+        plt.grid("off")
+        plt.show()
+    else:
+        fig, axs = plt.subplots(1, len(pred))
+        for i, p in enumerate(pred):
+            axs[i].imshow(p[0].reshape([IMG_SIZE,IMG_SIZE]))
+            axs[i].set_title(f"Prediction GC {i+1}")
+            axs[i].grid("off")
+        plt.show()
+
+def plot_2D_extrapolation(res, IMG_SIZE=16):
+    if len(res) == 1:
+        fig, axs = plt.subplots(1, len(res[0]))
+        for i, img in enumerate(res[0]):
+            axs[i].imshow(img[0].reshape([IMG_SIZE,IMG_SIZE]))
+            axs[i].grid("off")
+        plt.suptitle("Dynamical prediction")
+        plt.show()
+    else:
+        fig, axs = plt.subplots(len(res), len(res[0]))
+        for i, r in enumerate(res):
+            for j, img in enumerate(r):
+                axs[i, j].imshow(img[0].reshape([IMG_SIZE,IMG_SIZE]));
+                axs[i, j].grid("off")
+        plt.suptitle("Dynamical prediction in generalized coordinates")
+        plt.show()
 
 def plot_graph(errors, errors_d1, errors_d2, errors_d3, cov_d1, cov_d2, cov_d3,cov_g1,
            cov_g2, cov_g3, err_g1, err_g2, err_g3, err_h1, err_h2, err_h3,cov_h,
@@ -132,6 +174,33 @@ def plot_2D(net, img_size=64, title="", plot=True, examples=1):
 
     return input, preds
 
+def taylor_operator(n=3, dt=1, t=0):
+    """
+    Embedding operator and inverse embedding operator for
+    generalized Taylor series expansion via central finite differences
+
+    Y: [batch, time, width, height, channels]
+    n: embedding order, default = 3
+    dt: sampling interval, default = 1
+    t: time bin for expansion
+    y: embedding
+    """
+
+    # set up expansion
+    s = np.round((t)/dt)
+    k = np.asarray(range(1,n+1,1)) + np.trunc(s - (n + 1)/2)
+    x = s - np.min(k) + 1
+
+    # inverse embedding operator T: sequence = T*embedding
+    T = np.zeros([n,n])
+    for i in range(1, n+1, 1):
+        for j in range(1, n+1, 1):
+            T[i-1,j-1] = ((i-x)*dt)**(j-1) / np.prod(np.asarray(range(1,j,1)))
+
+    # embedding operator E: embedding = E*sequence
+    E = np.linalg.inv(np.matrix(T))
+
+    return torch.from_numpy(T).unsqueeze(-1).float(), torch.from_numpy(E).unsqueeze(1).float()
 
 class GPC_state(torch.nn.Module):
     def __init__(self, b_size, n_states_h, n_states_d, full_covar=False, var_prior=1., covar_prior=100000.):
@@ -177,11 +246,12 @@ class GPC_state(torch.nn.Module):
         # Return the full state [causes, hiddens]
         return self.state
 
-    def change(self, step=False, dt=.1):
+    def change(self, step=False, dt=.1, delay=0):
         """
         Compute difference between current and previous states
         step: new datapoint
         dt: temporal difference between samples
+        delay: induced lag per gen. coordinare / c.f. Taylor's Theorem
         """
         self.cause_change = (self.cause_state - self.cause_previous.detach()).detach()/dt
         self.hidd_change = (self.hidd_state - self.hidd_previous.detach()).detach()/dt
@@ -189,6 +259,7 @@ class GPC_state(torch.nn.Module):
             self.cause_previous = self.cause_state.clone().detach()
             self.hidd_previous = self.hidd_state.clone().detach()
         return self.cause_change, self.hidd_change
+
 
     def predstate(self, n_states_h=None, n_states_d=None, dynamical=False):
         """
@@ -296,8 +367,9 @@ class GPC_layer(torch.nn.Module):
 
         # states & precision learning rate
         if self.dynamical:
-            self.opts.append(torch.optim.SGD(self.states.params_state, lr=0.5))  # states used for prediction
-            self.opts.append(torch.optim.SGD(self.states.params_covar, lr=LR_PRECISION))  # states used for prediction
+            #self.opts.append(torch.optim.SGD(self.states.params_state, lr=LR_STATES_GC))  # states used for prediction
+            #self.opts.append(torch.optim.SGD(self.states.params_covar, lr=LR_PRECISION))  # states used for prediction
+            pass
         else:
             for layer in self.dyn_model.layers: # hierarchical states for every generalized coordinate
                 self.opts.append(torch.optim.SGD(layer.states.params_state, lr=LR_STATES))  # states used for prediction
@@ -344,12 +416,18 @@ class GPC_layer(torch.nn.Module):
         else:
             # predict lower layer state in generalized coordinates
             self.pred = []
-            for gen_coord in range(self.gc):
+
+            if PREDICT_COORDS:
+                gc_range = self.gc  # predict generalized coordinates
+            else:
+                gc_range = 1  # traditional SSM prediction
+
+            for gen_coord in range(gc_range):
                 dyn_layer = self.dyn_model.layers[gen_coord]
                 predstate = dyn_layer.states.predstate(n_states_h=self.n_predstates_h,
                                                        n_states_d=self.n_predstates_d,
                                                        dynamical=False)  # input state coordinate
-                pred = self.net_h[gen_coord](torch.cat(predstate, 1))
+                pred = ACT_h(self.net_h[gen_coord](torch.cat(predstate, 1)))
 
                 if overwrite: # replace target cause by its prediction
                     self.lower.dyn_model.layers[gen_coord].states.cause_state = pred.detach()
@@ -384,10 +462,9 @@ class GPC_layer(torch.nn.Module):
                 error_d.backward(gradient=torch.ones_like(error_d))
             else: # hierarchical cause state prediction error
                 err = 0.
-                for gen_coord in range(self.gc):
+                for gen_coord in range(len(self.pred)):
                     target = self.lower.dyn_model.layers[gen_coord].states.cause_state
-                    #if gen_coord > 0: target = target*10 # todo selectable dt scaling
-                    err = err + (self.pred[gen_coord] - target).abs().unsqueeze(-1) # todo MSE?
+                    err = err + (self.pred[gen_coord] - target).abs().unsqueeze(-1) # .mean(-1).unsqueeze(-1) todo MSE?
                 error = (err * self.lower.states.cause_covar_slow**-1 * err).squeeze() # todo precision weighting for each dynamical state
                 error.backward(gradient=torch.ones_like(error))
 
@@ -398,7 +475,6 @@ class GPC_layer(torch.nn.Module):
 
             # step dynamical variables
             if not self.dynamical:
-
                 for opt in self.dyn_model.opts_d:
                     opt.step()  # todo merge with hierarchical opts
                     opt.zero_grad()  # todo fix
@@ -422,7 +498,47 @@ class GPC_layer(torch.nn.Module):
 
 
 class GPC_net(torch.nn.Module):
-    def __init__(self, b_size=1, dynamical_net=True, var_prior=1., cause_sizes=[32,32,32,32], hidden_sizes=[0,0,0,0], obs_layer=None, gen_coords=5):
+
+    def generalized_feed(self, seq, time_to_batch=True, target=False):
+        """
+        Embed a batch of discrete sequences into
+        generalized coordinates and feed it to the network
+
+        input: discrete sequence of shape [time, batch, width, height]
+        output: embedded sequence of shape [time, batch, width, height, motion]
+
+        time_to_batch = True -> each timestep is treated as a datapoint along the batch axis
+        todo: time_to_batch = False -> the sequence is treated as context for a single datapoint
+        todo: other variants
+        """
+        img_size = self.cause_sizes[0]
+        length = seq.shape[0]
+        coords = self.gc
+
+        # for time embeddings, move everything except time to batch dim
+        seq = seq.reshape([length, self.b_size, img_size]).transpose(1,-1).transpose(0,-1).reshape([self.b_size*img_size,1,length])
+        self.embedding = self.conv_E(seq)
+        length = self.embedding.shape[-1]  # length might change from padding
+
+        # arrange time dimension of data
+        if time_to_batch:
+            self.embedding = self.embedding.reshape([img_size*self.b_size,coords,length]).permute([2,0,1])
+
+        # one coordinate per sensory dynamical layer
+        for coord, layer in enumerate(self.layers[0].dyn_model.layers):
+            layer.states.cause_state = self.embedding[..., coord].reshape([-1, img_size])
+            #if coord == 0: print("Embedding shape:", layer.states.cause_state.shape)
+
+        if target: # feed same data to deepest cause (control input)
+            # one coordinate per cause dynamical layer
+            for coord, layer in enumerate(self.layers[-1].dyn_model.layers):
+                layer.states.cause_state = layer.states.cause_state.detach()
+                layer.states.cause_state = self.embedding[..., coord].reshape(
+                    [-1, img_size]).detach()
+
+    def __init__(self, b_size=1, dynamical_net=True, var_prior=1.,
+                 cause_sizes=[32,32,32,32], length=1, dt = 1,
+                 hidden_sizes=[0,0,0,0], obs_layer=None, gen_coords=5):
         """
         Generalized predictive coding network
         """
@@ -431,8 +547,26 @@ class GPC_net(torch.nn.Module):
         # specify network type: hierarchical or dynamical
         self.dynamical_net = dynamical_net
         self.gc = gen_coords
+        self.b_size = b_size
+        if not self.dynamical_net:
+            b_size = b_size*length # todo
+        self.cause_sizes = cause_sizes
 
-        # input layer (ignored by dynamical models since they observe hierarchical states)
+        if not self.dynamical_net:  # provide sensory data in generalized coordinates
+            self.dt = dt
+            self.t = 0
+            self.T, self.E = taylor_operator(n=self.gc, dt=self.dt, t=self.t)
+
+            # embedding operator: sequence -> embedding
+            self.conv_E = torch.nn.Conv1d(1, self.gc, self.gc, stride=1, padding="valid", bias=False)  # same padding creates inaccuracies
+            self.conv_E.weight = torch.nn.Parameter(self.E)
+
+            # inverse embedding operator: embedding -> sequence
+            conv_T = torch.nn.Conv1d(self.gc, 1, self.gc, padding="valid", bias=False)
+            conv_T.weight = torch.nn.Parameter(self.T)
+
+
+        # input layer (ignored by dynamical models since they observe latent states)
         self.g_observation = GPC_layer(lower=None, b_size=b_size, dynamical=self.dynamical_net,
                                        h_states=cause_sizes[0], d_states=0,
                                        n_predstates_h=cause_sizes[0], n_predstates_d=0, gen_coords=self.gc)
@@ -508,7 +642,7 @@ class GPC_net(torch.nn.Module):
         Compute difference between current and previous state
         """
         for i, l in enumerate(self.layers):
-            l.states.change(step=step, dt=dt)
+            l.states.change(step=step, dt=dt, delay=l)
 
     def predict_from_(self, protect_states=True, overwrite=False, start_layer=-1):
         """
@@ -533,24 +667,21 @@ class GPC_net(torch.nn.Module):
             pred = layer.forward(overwrite=overwrite)
         return [p.detach().numpy() for p in pred]
 
-    def iterative_inference(self, data=None, target=None, updates=1, predict_hierarchical=True):
+    def inference(self, predict_hierarchical=True):
         """
-        Iteratively refines the prediction for observed data
+        Refines the prediction for observed data
         1) feed cause state and input state to first and last layer
         2) predict lower cause states in all layers (dynamical: lower state motion)
         3) only in dynamical: prediction of next higher dynamical states (= higher order gen. coord.)
         """
         errors, errors_hidden, errors_d, cov_h, cov_d = [], [], [], [], []
-        for i in range(updates):
-            if self.dynamical_net and data is None:
-                err_d, cd = self.forward_dynamical()  # dynamical prediction
-                errors_d.append(err_d); cov_d.append(cd)
-            else:
-                self.feed(data, target)  # feed data and targets
-            if predict_hierarchical:
-                self.forward()  # hierarchical prediction
-                err, err_hidd, ch, _ = self.infer()  # todo remove dynamical covar
-                errors.append(err); errors_hidden.append(err_hidd); cov_h.append(ch);
+        if self.dynamical_net and not predict_hierarchical:
+            err_d, cd = self.forward_dynamical()  # dynamical prediction
+            errors_d.append(err_d); cov_d.append(cd)
+        if predict_hierarchical:
+            self.forward()  # hierarchical prediction
+            err, err_hidd, ch, _ = self.infer()
+            errors.append(err); errors_hidden.append(err_hidd); cov_h.append(ch);
         return errors, errors_hidden, errors_d, cov_h, cov_d
 
     def hierarchical_states(self, previous=False):
@@ -643,7 +774,7 @@ class GPC_net(torch.nn.Module):
 
         return [layer.states.cause_state.detach()[0].numpy() for layer in self.layers]
 
-    def forward_dynamical(self, apply=False, apply_encoding=False, dt=1.):
+    def forward_dynamical(self, apply=False, apply_encoding=False, apply_causes=False, dt=1.):
         """
         Dynamical prediction and optimization between all dynamical layers in a hierarchical layer
         This couples orders of state motion: x' = f(x,v), x'' = f'(x',v'), ...
@@ -653,7 +784,7 @@ class GPC_net(torch.nn.Module):
         for l in range(len(self.layers[:-1])):
             opt_states = torch.optim.SGD([self.layers[l].states.cause_state,
                                           self.layers[l].states.hidd_state,
-                                          #self.layers[l+1].states.hidd_state,
+                                          self.layers[l+1].states.hidd_state,
                                           ], lr=LR_STATES_DYN) # todo fix LR
             opt_weights = torch.optim.SGD(self.nets_d[l].parameters(), lr=LR_WEIGHTS_DYN) # todo fix LR
 
@@ -661,16 +792,21 @@ class GPC_net(torch.nn.Module):
             opt_weights.zero_grad()
 
             # predict higher dynamical layer state (higher generalized coordinate)
-            input_hidden = self.layers[l].states.hidd_state  # x
-            input = torch.cat([self.layers[l].states.cause_state, input_hidden], 1)  # v,x
-            target = self.layers[l + 1].states.hidd_state  # x'
+            input_hidden = self.layers[l].states.hidd_state#.detach()  # x
+            input = torch.cat([self.layers[l].states.cause_state.detach(), input_hidden], 1)  # v,x
+            target = self.layers[l + 1].states.hidd_state.detach()  # x'
+
+            # traditional SSM transition
+            #input_hidden = self.layers[l].states.hidd_previous.detach()
+            #input = torch.cat([self.layers[l].states.cause_previous, input_hidden], 1).detach()  # v,x
+            #target = self.layers[l].states.hidd_state.detach() - input_hidden.detach()  # x'
 
             #pred = self.nets_d[l](input)  # f(v,x) # todo use this
-            pred = torch.matmul(self.nets_d[0].weight, input.T).T  # matmul prediction # todo fix
+            pred = ACT_d(torch.matmul(self.nets_d[0].weight, input.T).T)  # matmul prediction # todo fix
 
             if not apply:
                 # Dynamical prediction error
-                err = ((pred - target)**2).mean(-1).unsqueeze(-1)#.mean(-1).unsqueeze(-1).unsqueeze(-1) # todo MSE?
+                err = ((pred - target)**2).unsqueeze(-1)#.mean(-1).unsqueeze(-1)#.mean(-1).unsqueeze(-1).unsqueeze(-1) # todo MSE?
                 error = err # (err * self.covars_d[l]**-1 * err).squeeze()
                 error.backward(gradient=torch.ones_like(error))
                 opt_states.step()
@@ -685,11 +821,14 @@ class GPC_net(torch.nn.Module):
                     err_out = error.mean().detach().numpy()
                     covar_out = self.covars_d[l].mean().detach().numpy()
             else:  # apply predicted state motion to the state
-                # todo apply cause motion here too?
-                self.layers[l].states.hidd_state = self.layers[l].states.hidd_state.detach() + pred.detach() * dt
 
                 if apply_encoding: # overwrite encoded motion with predicted motion
                     self.layers[l+1].states.hidd_state = pred.detach()# * dt
+
+                self.layers[l].states.hidd_state = self.layers[l].states.hidd_state.detach() + pred.detach() * dt
+
+                if apply_causes: # apply encoded cause motion
+                    self.layers[l].states.cause_state = self.layers[l].states.cause_state.detach() + self.layers[l+1].states.cause_state.detach() * dt
 
         if not apply:
             return err_out, covar_out
