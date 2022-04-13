@@ -13,18 +13,18 @@ plt.style.use(['seaborn'])
 WEIGHTS_SHARING = True  # share weights between generalized coords in hierarchical prediction
 PROTECT_STATES = True  # overwrite of cause states with their prediction
 ONE_TO_ONE = True  # encode generalized coordinates independently per unit
-PRED_SPLIT = 256  # hidden units to use for outgoing prediction. remaining units are memory
-ACT_h = torch.nn.Tanh()  # activation of hierarchical predictions
-ACT_d = torch.nn.Tanh() # activation of dynamical predictions
+PRED_SPLIT = 1024  # hidden units to use for outgoing prediction. remaining units are memory
+ACT_h = torch.nn.Identity()  # activation of hierarchical predictions
+ACT_d = torch.nn.Identity() # activation of dynamical predictions
 PREDICT_COORDS = True
 
 # hierarchical LR (for hidden layers operating on generalized state coordinates)
 LR_STATES, LR_WEIGHTS, LR_PRECISION, UPDATES = .1, .001, 0., 1
-LR_SCALE = 1  # learning rate of states receiving prediction (regularization)
+LR_SCALE = .1  # learning rate of states receiving prediction (regularization)
 
 # dynamical LR (for hidden layers operating on generalized state coordinates)
 LR_WEIGHTS_DYN = LR_WEIGHTS  # optimize dynamics towards observed state motion
-LR_STATES_DYN = LR_STATES  # optimize state motion towards learned dynamics
+LR_STATES_DYN = .1  # optimize state motion towards learned dynamics
 
 def plot_sensory_coords(net, data, IMG_SIZE=16):
     fig, axs = plt.subplots(1, len(net.layers[0].dyn_model.layers)+1)
@@ -50,7 +50,14 @@ def plot_2D_coords(pred, IMG_SIZE=16):
             axs[i].grid("off")
         plt.show()
 
-def plot_2D_extrapolation(res, IMG_SIZE=16):
+def plot_2D_extrapolation(seq, res, IMG_SIZE=16, length=5):
+    # Plot true sequence
+    fig, axs = plt.subplots(1, length)
+    for i, img in enumerate(seq[0][1:(length+1)]): axs[i].imshow(img.reshape([IMG_SIZE, IMG_SIZE]))
+    plt.suptitle("Ground truth")
+    plt.show()
+
+    # PLot model extrapolation
     if len(res) == 1:
         fig, axs = plt.subplots(1, len(res[0]))
         for i, img in enumerate(res[0]):
@@ -642,6 +649,7 @@ class GPC_net(torch.nn.Module):
         Compute difference between current and previous state
         """
         for i, l in enumerate(self.layers):
+            # todo central differencing instead of causal/backward
             l.states.change(step=step, dt=dt, delay=l)
 
     def predict_from_(self, protect_states=True, overwrite=False, start_layer=-1):
